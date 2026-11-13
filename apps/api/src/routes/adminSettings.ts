@@ -3,7 +3,7 @@ import { adminSettingsUpdateSchema, type AdminSettings } from "@funnel/shared";
 import { requireAdminAuth } from "@/admin/auth";
 import { db } from "@/db";
 import { settings } from "@/db/schema";
-import { chatCleanupHours, invalidateSettings, linkTtlHours, messageCaps } from "@/settings/service";
+import { chatCleanupHours, invalidateSettings, linkTtlHours, messageCaps, quietHoursEnabled, segmentLoops } from "@/settings/service";
 
 export const adminSettingsRoutes = new Hono();
 
@@ -14,6 +14,8 @@ async function currentSettings(): Promise<AdminSettings> {
     linkTtlHours: await linkTtlHours(),
     messageCaps: await messageCaps(),
     chatCleanupHours: await chatCleanupHours(),
+    quietHoursEnabled: await quietHoursEnabled(),
+    segmentLoops: await segmentLoops(),
   };
 }
 
@@ -29,6 +31,8 @@ adminSettingsRoutes.put("/", async (c) => {
     ...(body.data.linkTtlHours === undefined ? [] : [{ key: "LINK_TTL_HOURS", value: String(body.data.linkTtlHours) }]),
     ...(body.data.messageCaps === undefined ? [] : [{ key: "MESSAGE_CAPS", value: JSON.stringify(body.data.messageCaps) }]),
     ...(body.data.chatCleanupHours === undefined ? [] : [{ key: "CHAT_CLEANUP_HOURS", value: String(body.data.chatCleanupHours) }]),
+    ...(body.data.quietHoursEnabled === undefined ? [] : [{ key: "QUIET_HOURS_ENABLED", value: String(body.data.quietHoursEnabled) }]),
+    ...(body.data.segmentLoops === undefined ? [] : [{ key: "SEGMENT_LOOPS", value: JSON.stringify(body.data.segmentLoops) }]),
   ];
   await db().transaction(async (tx) => {
     for (const row of values) {

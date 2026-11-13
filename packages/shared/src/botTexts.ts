@@ -134,6 +134,9 @@ export const botTextItemSchema = z.object({
   defaultText: z.string(),
   text: z.string().nullable(),
   media: z.object({ type: z.enum(["photo", "video"]) }).nullable(),
+  scheduledAt: z.string().nullable(),
+  scheduledSentAt: z.string().nullable(),
+  autoDeleteMinutes: z.number().int().min(1).max(10080).nullable(),
   updatedAt: z.string().nullable(),
 });
 
@@ -148,6 +151,8 @@ export type BotTextsResponse = z.infer<typeof botTextsResponseSchema>;
 
 export const botTextUpdateSchema = z.object({
   text: z.string().max(BOT_TEXT_LIMITS.message * 2),
+  scheduledAt: z.string().datetime({ offset: true }).nullable().optional(),
+  autoDeleteMinutes: z.number().int().min(1).max(10080).nullable().optional(),
 });
 
 export type BotTextUpdate = z.infer<typeof botTextUpdateSchema>;

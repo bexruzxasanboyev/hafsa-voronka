@@ -197,6 +197,8 @@ export function seedInputs(segment: FunnelSegment): MessageTemplateInput[] {
     text: template.text,
     media: null,
     minute: template.minute,
+    timingMode: "interval" as const,
+    autoDeleteMinutes: null,
     buttons: template.buttons,
     isActive: true,
     statuses: template.statuses ?? null,

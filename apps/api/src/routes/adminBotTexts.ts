@@ -45,7 +45,10 @@ adminBotTextRoutes.put("/:key", async (c) => {
   const error = validateBotText(key, body.data.text, hasMedia);
   if (error) return c.json({ error }, 422);
 
-  await saveBotText(key, body.data.text);
+  await saveBotText(key, body.data.text, {
+    scheduledAt: body.data.scheduledAt,
+    autoDeleteMinutes: body.data.autoDeleteMinutes,
+  });
   return c.json({ items: await listBotTexts() });
 });
 

@@ -1,6 +1,9 @@
 import {
   adminStatsResponseSchema,
   type AdminStatsResponse,
+  type CampaignLinkItem,
+  type PaymentsDashboardResponse,
+  type SourceNetwork,
 } from "@funnel/shared";
 import { API_URL } from "@/lib/api";
 
@@ -125,4 +128,133 @@ export function getLeadsCsvUrl(params: {
   if (token) query.set("token", token);
 
   return `${API_URL}/admin/leads.csv?${query.toString()}`;
+}
+
+export async function fetchCampaignLinks(): Promise<CampaignLinkItem[]> {
+  const res = await fetch(`${API_URL}/admin/campaign-links`, {
+    method: "GET",
+    headers: authHeaders(),
+    credentials: "include",
+  });
+  if (res.status === 401) throw new Error("UNAUTHORIZED");
+  if (!res.ok) throw new Error(`CAMPAIGN_LINKS_${res.status}`);
+  const json = await res.json();
+  return (json.items ?? []) as CampaignLinkItem[];
+}
+
+export async function createCampaignLink(input: {
+  code?: string;
+  utm_source: string;
+  utm_campaign?: string;
+  utm_content?: string;
+}): Promise<CampaignLinkItem> {
+  const res = await fetch(`${API_URL}/admin/campaign-links`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...authHeaders() },
+    body: JSON.stringify(input),
+    credentials: "include",
+  });
+  if (res.status === 401) throw new Error("UNAUTHORIZED");
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err?.error || `CREATE_LINK_${res.status}`);
+  }
+  return (await res.json()) as CampaignLinkItem;
+}
+
+export async function deleteCampaignLink(code: string): Promise<void> {
+  const res = await fetch(`${API_URL}/admin/campaign-links/${encodeURIComponent(code)}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+    credentials: "include",
+  });
+  if (res.status === 401) throw new Error("UNAUTHORIZED");
+}
+
+export async function fetchPaymentsDashboard(): Promise<PaymentsDashboardResponse> {
+  const res = await fetch(`${API_URL}/admin/payments`, {
+    method: "GET",
+    headers: authHeaders(),
+    credentials: "include",
+  });
+  if (res.status === 401) throw new Error("UNAUTHORIZED");
+  if (!res.ok) throw new Error(`PAYMENTS_${res.status}`);
+  return (await res.json()) as PaymentsDashboardResponse;
+}
+
+export type LookupUserItem = {
+  userId: number;
+  telegramId: number;
+  username: string | null;
+  studentName: string;
+  phone: string | null;
+  sourceNetwork: SourceNetwork;
+};
+
+export async function lookupPaymentUsers(q: string): Promise<LookupUserItem[]> {
+  const res = await fetch(`${API_URL}/admin/payments/lookup-user?q=${encodeURIComponent(q)}`, {
+    method: "GET",
+    headers: authHeaders(),
+    credentials: "include",
+  });
+  if (!res.ok) return [];
+  const json = await res.json();
+  return (json.items ?? []) as LookupUserItem[];
+}
+
+export async function createEnrollment(input: Record<string, unknown>): Promise<{ id: number }> {
+  const res = await fetch(`${API_URL}/admin/payments/enrollments`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...authHeaders() },
+    body: JSON.stringify(input),
+    credentials: "include",
+  });
+  if (res.status === 401) throw new Error("UNAUTHORIZED");
+  if (!res.ok) throw new Error(`CREATE_ENROLLMENT_${res.status}`);
+  return (await res.json()) as { id: number };
+}
+
+export async function updateEnrollment(id: number, input: Record<string, unknown>): Promise<void> {
+  const res = await fetch(`${API_URL}/admin/payments/enrollments/${id}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json", ...authHeaders() },
+    body: JSON.stringify(input),
+    credentials: "include",
+  });
+  if (res.status === 401) throw new Error("UNAUTHORIZED");
+  if (!res.ok) throw new Error(`UPDATE_ENROLLMENT_${res.status}`);
+}
+
+export async function deleteEnrollment(id: number): Promise<void> {
+  const res = await fetch(`${API_URL}/admin/payments/enrollments/${id}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+    credentials: "include",
+  });
+  if (res.status === 401) throw new Error("UNAUTHORIZED");
+}
+
+export async function addEnrollmentPayment(
+  enrollmentId: number,
+  input: { amount: number; paidAt?: string; note?: string | null },
+): Promise<void> {
+  const res = await fetch(`${API_URL}/admin/payments/enrollments/${enrollmentId}/payments`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...authHeaders() },
+    body: JSON.stringify(input),
+    credentials: "include",
+  });
+  if (res.status === 401) throw new Error("UNAUTHORIZED");
+  if (!res.ok) throw new Error(`ADD_PAYMENT_${res.status}`);
+}
+
+export async function createPaymentCatalogItem(input: Record<string, unknown>): Promise<void> {
+  const res = await fetch(`${API_URL}/admin/payments/catalog`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...authHeaders() },
+    body: JSON.stringify(input),
+    credentials: "include",
+  });
+  if (res.status === 401) throw new Error("UNAUTHORIZED");
+  if (!res.ok) throw new Error(`CATALOG_${res.status}`);
 }

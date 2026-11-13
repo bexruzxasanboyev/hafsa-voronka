@@ -4,9 +4,11 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useState } from "react";
 import {
+  DEFAULT_SEGMENT_LOOPS,
   type FunnelSegment,
   funnelSegments,
   type MessageTemplate,
+  type SegmentLoops,
   type TemplateKind,
   TRIGGER_DEFAULT_BUTTON,
 } from "@funnel/shared";
@@ -18,10 +20,11 @@ import { buttonClass } from "@/components/admin/ui/Button";
 import { Notice } from "@/components/admin/ui/Notice";
 import { Page, PageHeader } from "@/components/admin/ui/Page";
 import { ErrorState, LoadingState } from "@/components/admin/ui/States";
+import { Switch } from "@/components/admin/ui/Switch";
 import { ChevronLeftIcon } from "@/components/icons";
 import { fetchMessages, reorderMessages, setMessageActive } from "@/lib/admin/messages";
 import { defaultMinuteFor } from "@/lib/admin/messageTiming";
-import { fetchSettings } from "@/lib/admin/settings";
+import { fetchSettings, saveSettings } from "@/lib/admin/settings";
 import { adminUz } from "@/lib/i18n/admin";
 
 const copy = adminUz.messages;
@@ -66,6 +69,7 @@ function AdminMessagesContent() {
   const [notice, setNotice] = useState<string | null>(null);
   const [editing, setEditing] = useState<Editing>(null);
   const [linkTtlHours, setLinkTtlHours] = useState<number | null>(null);
+  const [segmentLoops, setSegmentLoops] = useState<SegmentLoops>(DEFAULT_SEGMENT_LOOPS);
   const [shownStage, setShownStage] = useState(stage);
   const [day, setDay] = useState(1);
 
@@ -117,7 +121,10 @@ function AdminMessagesContent() {
       setFailed(anyFailed);
     });
     void fetchSettings().then((result) => {
-      if (active && result.ok) setLinkTtlHours(result.settings.linkTtlHours);
+      if (active && result.ok) {
+        setLinkTtlHours(result.settings.linkTtlHours);
+        setSegmentLoops(result.settings.segmentLoops);
+      }
     });
     return () => {
       active = false;
@@ -221,7 +228,26 @@ function AdminMessagesContent() {
       {stage && !loaded && !failed && <LoadingState variant="list" rows={3} />}
 
       {stage && loaded && (
-        <DayTimeline
+        <>
+          <div className="flex items-center justify-between gap-4 rounded-[16px] border border-chiziq bg-white px-4 py-3">
+            <div className="space-y-0.5">
+              <div className="text-sm font-semibold text-siyoh">30 kunlik siklni qayta boshlash (Loop)</div>
+              <p className="m-0 text-xs text-qalam">
+                Yoqilgan bo‘lsa, 30-kundan keyin foydalanuvchi avtomatik ravishda 1-kun xabarlariga qaytadi.
+              </p>
+            </div>
+            <Switch
+              checked={segmentLoops[stage]}
+              label="30 kunlik siklni qayta boshlash"
+              onChange={async (next) => {
+                const updated = { ...segmentLoops, [stage]: next };
+                setSegmentLoops(updated);
+                const res = await saveSettings({ segmentLoops: updated });
+                if (res.ok) setSegmentLoops(res.settings.segmentLoops);
+              }}
+            />
+          </div>
+          <DayTimeline
           segment={stage}
           items={loaded.items}
           videoMarks={loaded.videoMarks}
@@ -237,6 +263,7 @@ function AdminMessagesContent() {
           onToggle={(item, isActive) => void toggle(item, isActive)}
           onMove={(group, index, direction) => void move(group, index, direction)}
         />
+        </>
       )}
 
       {editing && editingSource && (

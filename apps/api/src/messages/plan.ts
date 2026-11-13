@@ -11,6 +11,7 @@ import {
   TASHKENT_OFFSET_MS,
   TEMPLATE_DAYS,
   type TemplateKind,
+  type TimingMode,
 } from "@funnel/shared";
 
 export const MINUTE_MS = 60_000;
@@ -28,6 +29,7 @@ export type ScheduleTemplate = {
   day: number;
   position: number;
   timingValue: number;
+  timingMode?: TimingMode;
   kind: TemplateKind;
   atExpiry: boolean;
   statuses?: readonly FunnelStatus[] | null;
@@ -94,12 +96,26 @@ export function triggerSendAt(template: ScheduleTemplate, windowStart: Date): Da
   return new Date(candidate < start ? candidate + DAY_MS : candidate);
 }
 
+export function cycleIndexFor(enteredAt: Date, now: Date, loopEnabled: boolean): number {
+  if (!loopEnabled) return 0;
+  const elapsedDays = Math.floor((tashkentDayStart(now).getTime() - tashkentDayStart(enteredAt).getTime()) / DAY_MS);
+  return Math.max(0, Math.floor(elapsedDays / TEMPLATE_DAYS));
+}
+
 function linkChain<T extends ScheduleTemplate>(templates: T[], anchorAt: Date, grant: FunnelGrant | null): PlanItem<T>[] {
-  const day = grant?.day ?? 1;
+  const rawDay = grant?.day ?? 1;
+  const day = ((rawDay - 1) % TEMPLATE_DAYS) + 1;
   const expiresAt = grant?.expiresAt ?? null;
+  const anchorDayStart = tashkentDayStart(anchorAt).getTime();
   const reminders = templates
     .filter((template) => template.kind === "reminder" && template.day === day)
-    .map((template) => ({ template, sendAt: new Date(anchorAt.getTime() + template.timingValue * MINUTE_MS) }))
+    .map((template) => {
+      const sendAt =
+        template.timingMode === "exact_time"
+          ? new Date(anchorDayStart + template.timingValue * MINUTE_MS)
+          : new Date(anchorAt.getTime() + template.timingValue * MINUTE_MS);
+      return { template, sendAt };
+    })
     .filter((item) => !expiresAt || item.sendAt.getTime() < expiresAt.getTime());
   if (!expiresAt) return reminders;
   const triggers = templates
@@ -111,12 +127,19 @@ function linkChain<T extends ScheduleTemplate>(templates: T[], anchorAt: Date, g
   return [...reminders, ...triggers];
 }
 
-function trackChain<T extends ScheduleTemplate>(templates: T[], enteredAt: Date, anchorAt: Date): PlanItem<T>[] {
-  const firstDay = tashkentDayStart(enteredAt).getTime();
+function trackChain<T extends ScheduleTemplate>(
+  templates: T[],
+  enteredAt: Date,
+  anchorAt: Date,
+  cycleIndex = 0,
+): PlanItem<T>[] {
+  const firstDay = tashkentDayStart(enteredAt).getTime() + cycleIndex * CHAIN_MS;
   return templates.map((template) => {
     const offset = template.timingValue * MINUTE_MS;
     const sendAt =
-      template.day <= 1 ? anchorAt.getTime() + offset : firstDay + (template.day - 1) * DAY_MS + offset;
+      template.day <= 1 && cycleIndex === 0 && template.timingMode !== "exact_time"
+        ? anchorAt.getTime() + offset
+        : firstDay + (template.day - 1) * DAY_MS + offset;
     return { template, sendAt: new Date(sendAt) };
   });
 }
@@ -127,6 +150,7 @@ export type ChainRun = {
   status?: FunnelStatus | null;
   watch?: WatchSnapshot | null;
   grant?: FunnelGrant | null;
+  cycleIndex?: number;
 };
 
 export function planChain<T extends ScheduleTemplate>(templates: T[], run: ChainRun): PlanItem<T>[] {
@@ -134,7 +158,7 @@ export function planChain<T extends ScheduleTemplate>(templates: T[], run: Chain
   const anchorAt = chainAnchor(run, run.watch ?? null);
   const items = linkBoundSegments.includes(run.segment)
     ? linkChain(eligible, anchorAt, run.grant ?? null)
-    : trackChain(eligible, run.enteredAt, anchorAt);
+    : trackChain(eligible, run.enteredAt, anchorAt, run.cycleIndex ?? 0);
   return items.sort(compareItems);
 }
 

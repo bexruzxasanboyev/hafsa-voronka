@@ -11,6 +11,7 @@ import {
 } from "@funnel/shared";
 import { buttonUsage } from "@/components/admin/bot/scenarios";
 import { EditBadge, MediaThumb } from "@/components/admin/bot/BotChat";
+import { AutoDeletePicker } from "@/components/admin/messages/AutoDeletePicker";
 import { RichTextView } from "@/components/admin/messages/MessagePreview";
 import { TextEditor } from "@/components/admin/messages/editor/TextEditor";
 import type { EditorVariable } from "@/components/admin/messages/editor/variables";
@@ -48,22 +49,70 @@ type BotTextEditorProps = {
   onClose: () => void;
 };
 
+const MONTHS_UZ = [
+  "Yanvar",
+  "Fevral",
+  "Mart",
+  "Aprel",
+  "May",
+  "Iyun",
+  "Iyul",
+  "Avgust",
+  "Sentabr",
+  "Oktabr",
+  "Noyabr",
+  "Dekabr",
+];
+
+function parseTashkentParts(iso: string | null) {
+  if (!iso) return null;
+  const ms = new Date(iso).getTime() + 5 * 3600 * 1000;
+  const d = new Date(ms);
+  return {
+    year: d.getUTCFullYear(),
+    month: d.getUTCMonth() + 1,
+    day: d.getUTCDate(),
+    hour: d.getUTCHours(),
+    minute: d.getUTCMinutes(),
+  };
+}
+
+function buildTashkentIso(parts: { year: number; month: number; day: number; hour: number; minute: number }): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${parts.year}-${pad(parts.month)}-${pad(parts.day)}T${pad(parts.hour)}:${pad(parts.minute)}:00+05:00`;
+}
+
 export function BotTextEditor({ item, mediaEnabled, onItems, onClose }: BotTextEditorProps) {
   const current = item.text ?? item.defaultText;
   const isButton = item.kind === "button";
   const [draft, setDraft] = useState(current);
+  const [scheduleEnabled, setScheduleEnabled] = useState(Boolean(item.scheduledAt));
+  const [schedParts, setSchedParts] = useState(() => {
+    const existing = parseTashkentParts(item.scheduledAt);
+    if (existing) return existing;
+    const now = parseTashkentParts(new Date().toISOString())!;
+    return { ...now, hour: 20, minute: 0 };
+  });
+  const [autoDeleteMinutes, setAutoDeleteMinutes] = useState<number | null>(item.autoDeleteMinutes ?? null);
   const [busy, setBusy] = useState<Busy>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<"edit" | "preview">("edit");
   const [resetOpen, setResetOpen] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
 
+  const nextScheduledAt = !isButton && scheduleEnabled ? buildTashkentIso(schedParts) : null;
+  const scheduleDirty =
+    !isButton &&
+    ((nextScheduledAt ? new Date(nextScheduledAt).getTime() : null) !==
+      (item.scheduledAt ? new Date(item.scheduledAt).getTime() : null) ||
+      autoDeleteMinutes !== (item.autoDeleteMinutes ?? null));
+
   const hasMedia = item.media !== null;
   const edited = item.text !== null || hasMedia;
   const limit = botTextLimit(item.key, hasMedia);
   const length = isButton ? draft.length : botVisibleLength(draft);
   const validation = validateBotText(item.key, draft, hasMedia);
-  const dirty = draft !== current;
+  const dirty = draft !== current || scheduleDirty;
   const { label } = copy.items[item.key];
   const fieldError = error ?? (validation && draft.trim() ? errorMessage(item, validation) : null);
   const variables: EditorVariable[] = item.placeholders.map((name) => ({
@@ -86,7 +135,16 @@ export function BotTextEditor({ item, mediaEnabled, onItems, onClose }: BotTextE
   }
 
   const save = () =>
-    run("save", () => saveBotText(item.key, draft), onClose);
+    run(
+      "save",
+      () =>
+        saveBotText(
+          item.key,
+          draft,
+          isButton ? undefined : { scheduledAt: nextScheduledAt, autoDeleteMinutes },
+        ),
+      onClose,
+    );
 
   const reset = async () => {
     await run("reset", () => resetBotText(item.key), onClose);
@@ -248,6 +306,110 @@ export function BotTextEditor({ item, mediaEnabled, onItems, onClose }: BotTextE
                     )}
                   </div>
                   {mediaEnabled && <p className="m-0 -mt-3 text-[13px] text-qalam">{copy.mediaHint}</p>}
+
+                  <div className="flex flex-col gap-3 rounded-[12px] border border-chiziq p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-semibold text-siyoh">
+                        Belgilangan sana va vaqtda yuborish (Toshkent vaqti)
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={scheduleEnabled}
+                        onChange={(e) => setScheduleEnabled(e.target.checked)}
+                        className="h-4 w-4 accent-siyoh cursor-pointer"
+                      />
+                    </div>
+                    {item.scheduledSentAt && (
+                      <p className="m-0 text-xs text-emerald-700">
+                        Oxirgi yuborilgan: {new Date(item.scheduledSentAt).toLocaleString("uz-UZ")}
+                      </p>
+                    )}
+                    {scheduleEnabled && (
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+                        <Field label="Yil">
+                          {({ id }) => (
+                            <select
+                              id={id}
+                              value={schedParts.year}
+                              onChange={(e) => setSchedParts((p) => ({ ...p, year: Number(e.target.value) }))}
+                              className="w-full rounded-xl border border-chiziq bg-white px-2.5 py-2 text-sm text-siyoh"
+                            >
+                              {[2026, 2027, 2028].map((y) => (
+                                <option key={y} value={y}>
+                                  {y}
+                                </option>
+                              ))}
+                            </select>
+                          )}
+                        </Field>
+                        <Field label="Oy">
+                          {({ id }) => (
+                            <select
+                              id={id}
+                              value={schedParts.month}
+                              onChange={(e) => setSchedParts((p) => ({ ...p, month: Number(e.target.value) }))}
+                              className="w-full rounded-xl border border-chiziq bg-white px-2.5 py-2 text-sm text-siyoh"
+                            >
+                              {MONTHS_UZ.map((m, idx) => (
+                                <option key={m} value={idx + 1}>
+                                  {m}
+                                </option>
+                              ))}
+                            </select>
+                          )}
+                        </Field>
+                        <Field label="Kun">
+                          {({ id }) => (
+                            <select
+                              id={id}
+                              value={schedParts.day}
+                              onChange={(e) => setSchedParts((p) => ({ ...p, day: Number(e.target.value) }))}
+                              className="w-full rounded-xl border border-chiziq bg-white px-2.5 py-2 text-sm text-siyoh"
+                            >
+                              {Array.from({ length: 31 }, (_, i) => i + 1).map((d) => (
+                                <option key={d} value={d}>
+                                  {d}
+                                </option>
+                              ))}
+                            </select>
+                          )}
+                        </Field>
+                        <Field label="Soat">
+                          {({ id }) => (
+                            <select
+                              id={id}
+                              value={schedParts.hour}
+                              onChange={(e) => setSchedParts((p) => ({ ...p, hour: Number(e.target.value) }))}
+                              className="w-full rounded-xl border border-chiziq bg-white px-2.5 py-2 text-sm text-siyoh"
+                            >
+                              {Array.from({ length: 24 }, (_, i) => i).map((h) => (
+                                <option key={h} value={h}>
+                                  {String(h).padStart(2, "0")}
+                                </option>
+                              ))}
+                            </select>
+                          )}
+                        </Field>
+                        <Field label="Daqiqa">
+                          {({ id }) => (
+                            <select
+                              id={id}
+                              value={schedParts.minute}
+                              onChange={(e) => setSchedParts((p) => ({ ...p, minute: Number(e.target.value) }))}
+                              className="w-full rounded-xl border border-chiziq bg-white px-2.5 py-2 text-sm text-siyoh"
+                            >
+                              {Array.from({ length: 60 }, (_, i) => i).map((m) => (
+                                <option key={m} value={m}>
+                                  {String(m).padStart(2, "0")}
+                                </option>
+                              ))}
+                            </select>
+                          )}
+                        </Field>
+                      </div>
+                    )}
+                    <AutoDeletePicker value={autoDeleteMinutes} onChange={setAutoDeleteMinutes} />
+                  </div>
                 </div>
 
                 <div className={`${tab === "preview" ? "flex" : "hidden"} flex-col gap-2 lg:sticky lg:top-0 lg:flex lg:self-start`}>

@@ -3,6 +3,7 @@ import type { FunnelStatus } from "@funnel/shared";
 import {
   capReached,
   chainAnchor,
+  cycleIndexFor,
   DAILY_CAP,
   GRACE_MS,
   isWatchingNow,
@@ -324,5 +325,24 @@ describe("caps", () => {
     const loose = { daily: 50, total: null };
     expect(capReached({ today: DAILY_CAP, runToday: 0, runTotal: 0 }, loose)).toBe(true);
     expect(capReached({ today: DAILY_CAP - 1, runToday: 9, runTotal: 100 }, loose)).toBe(false);
+  });
+});
+
+describe("exact_time & 30-day loop", () => {
+  it("schedules exact_time on day 1 at Tashkent HH:MM", () => {
+    const exact = template({ day: 1, timingValue: 390, timingMode: "exact_time" });
+    const plan = planChain([exact], { segment: "C", enteredAt: local("2026-10-19T05:00") });
+    expect(localTime(plan[0].sendAt)).toBe("2026-10-19T06:30");
+  });
+
+  it("advances cycleIndex on day 31 when loop is enabled", () => {
+    const entered = local("2026-10-01T10:00");
+    expect(cycleIndexFor(entered, local("2026-10-30T10:00"), true)).toBe(0);
+    expect(cycleIndexFor(entered, local("2026-10-31T10:00"), true)).toBe(1);
+    expect(cycleIndexFor(entered, local("2026-10-31T10:00"), false)).toBe(0);
+
+    const day1 = template({ day: 1, timingValue: 480, timingMode: "exact_time" });
+    const loopPlan = planChain([day1], { segment: "C", enteredAt: entered, cycleIndex: 1 });
+    expect(localTime(loopPlan[0].sendAt)).toBe("2026-10-31T08:00");
   });
 });

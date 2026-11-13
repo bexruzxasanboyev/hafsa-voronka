@@ -33,10 +33,28 @@ export const DEFAULT_MESSAGE_CAPS: MessageCaps = {
   C: { daily: MESSAGE_DAILY_CEILING, total: null },
 };
 
+export const segmentLoopsSchema = z.object({
+  A: z.boolean(),
+  B: z.boolean(),
+  C: z.boolean(),
+});
+
+export type SegmentLoops = z.infer<typeof segmentLoopsSchema>;
+
+export const DEFAULT_SEGMENT_LOOPS: SegmentLoops = {
+  A: true,
+  B: true,
+  C: true,
+};
+
+export const DEFAULT_QUIET_HOURS_ENABLED = false;
+
 export const adminSettingsSchema = z.object({
   linkTtlHours: z.number().int().min(LINK_TTL_HOURS_MIN).max(LINK_TTL_HOURS_MAX),
   messageCaps: messageCapsSchema,
   chatCleanupHours: chatCleanupHoursSchema,
+  quietHoursEnabled: z.boolean(),
+  segmentLoops: segmentLoopsSchema,
 });
 
 export const adminSettingsUpdateSchema = adminSettingsSchema

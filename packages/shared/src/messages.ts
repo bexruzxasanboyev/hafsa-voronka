@@ -27,12 +27,15 @@ export const TEMPLATE_TEXT_LIMITS = {
   caption: 1024,
 } as const;
 
-export const TEMPLATE_DAYS = 7;
+export const TEMPLATE_DAYS = 30;
 export const MINUTES_PER_DAY = 1440;
 export const NIGHT = { start: 1380, end: 420 } as const;
 export const TASHKENT_OFFSET_MS = 5 * 60 * 60 * 1000;
 export const EXTENDED_EXPIRY_MINUTE = 9 * 60;
 export const linkBoundSegments: readonly FunnelSegment[] = ["A", "B"];
+export const timingModes = ["interval", "exact_time"] as const;
+export type TimingMode = (typeof timingModes)[number];
+export const AUTO_DELETE_MINUTES_OPTIONS = [60, 180, 360, 720, 1440] as const;
 
 export const segmentStatuses: Record<FunnelSegment, readonly FunnelStatus[]> = {
   A: ["link_berildi"],
@@ -520,6 +523,8 @@ export const messageTemplateBaseSchema = z.object({
   text: z.string().max(TEMPLATE_TEXT_LIMITS.message * 3),
   media: templateMediaSchema.nullable(),
   minute: z.number().int(),
+  timingMode: z.enum(timingModes).default("interval"),
+  autoDeleteMinutes: z.number().int().min(1).max(10080).nullable().default(null),
   buttons: z.array(templateButtonSchema).max(MAX_TEMPLATE_BUTTONS),
   isActive: z.boolean(),
   statuses: z.array(z.enum(funnelStatuses)).min(1).max(funnelStatuses.length).nullable().default(null),

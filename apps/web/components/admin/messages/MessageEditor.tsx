@@ -29,6 +29,7 @@ import { ButtonsEditor } from "@/components/admin/messages/ButtonsEditor";
 import { MessagePreview } from "@/components/admin/messages/MessagePreview";
 import { StopPointPicker, stopPointLabel, type VideoMarks } from "@/components/admin/messages/StopPointPicker";
 import { TextEditor } from "@/components/admin/messages/editor/TextEditor";
+import { AutoDeletePicker } from "@/components/admin/messages/AutoDeletePicker";
 import { TimingPicker } from "@/components/admin/messages/TimingPicker";
 import {
   createMessage,
@@ -132,6 +133,8 @@ export function MessageEditor({
           text: item.text,
           media: item.media,
           minute: item.minute,
+          timingMode: item.timingMode ?? "interval",
+          autoDeleteMinutes: item.autoDeleteMinutes ?? null,
           buttons: item.buttons,
           isActive: item.isActive,
           statuses: item.statuses,
@@ -147,6 +150,8 @@ export function MessageEditor({
           minute:
             preset?.minute ??
             defaultMinuteFor({ segment, day: preset?.day ?? 1, kind: preset?.kind ?? "reminder", atExpiry: preset?.atExpiry ?? false }),
+          timingMode: "interval",
+          autoDeleteMinutes: null,
           buttons: preset?.buttons ?? [],
           isActive: true,
           statuses: preset?.statuses ?? null,
@@ -307,7 +312,13 @@ export function MessageEditor({
                 open={timingOpen || timingError !== null}
                 onOpenChange={setTimingOpen}
               >
-                <TimingPicker subject={draft} minute={draft.minute} onChange={patch} error={timingError} />
+                <div className="flex flex-col gap-4">
+                  <TimingPicker subject={draft} minute={draft.minute} onChange={patch} error={timingError} />
+                  <AutoDeletePicker
+                    value={draft.autoDeleteMinutes ?? null}
+                    onChange={(autoDeleteMinutes) => patch({ autoDeleteMinutes })}
+                  />
+                </div>
               </Disclosure>
 
               <div className="flex items-center gap-3 rounded-[12px] border border-chiziq py-2 pl-3 pr-2">

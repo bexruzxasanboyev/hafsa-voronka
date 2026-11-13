@@ -30,9 +30,11 @@ import {
   rolloutAudiences,
   rolloutStatuses,
   segmentEndReasons,
+  sourceNetworks,
   type TemplateButton,
   templateKinds,
   templateMediaTypes,
+  timingModes,
   type Utm,
 } from "@funnel/shared";
 
@@ -265,6 +267,9 @@ export const botTexts = pgTable("bot_texts", {
   text: text("text"),
   mediaType: text("media_type"),
   mediaFileId: text("media_file_id"),
+  scheduledAt: timestamp("scheduled_at", { withTimezone: true }),
+  scheduledSentAt: timestamp("scheduled_sent_at", { withTimezone: true }),
+  autoDeleteMinutes: integer("auto_delete_minutes"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
@@ -371,6 +376,8 @@ export const messageTemplates = pgTable(
     mediaType: text("media_type", { enum: templateMediaTypes }),
     mediaFileId: text("media_file_id"),
     timingValue: integer("timing_value").notNull(),
+    timingMode: text("timing_mode", { enum: timingModes }).default("interval").notNull(),
+    autoDeleteMinutes: integer("auto_delete_minutes"),
     buttons: jsonb("buttons").$type<TemplateButton[]>().default([]).notNull(),
     statuses: text("statuses").array().$type<FunnelStatus[]>(),
     kind: text("kind", { enum: templateKinds }).default("reminder").notNull(),
@@ -385,7 +392,7 @@ export const messageTemplates = pgTable(
     index("message_templates_day_idx")
       .on(t.segment, t.day, t.position)
       .where(sql`${t.deletedAt} is null`),
-    check("message_templates_day_range", sql`${t.day} between 1 and 7`),
+    check("message_templates_day_range", sql`${t.day} between 1 and 30`),
     check("message_templates_segment_values", sql`${t.segment} in ('A', 'B', 'C') or ${t.deletedAt} is not null`),
     check("message_templates_timing_value_range", sql`${t.timingValue} between 0 and 1439`),
     uniqueIndex("message_templates_one_trigger_idx")
@@ -393,7 +400,7 @@ export const messageTemplates = pgTable(
       .where(sql`${t.kind} = 'trigger' and ${t.isActive} and ${t.deletedAt} is null`),
     check(
       "message_templates_kind_shape",
-      sql`(${t.kind} = 'reminder' and not ${t.atExpiry}) or (${t.kind} = 'trigger' and ${t.segment} in ('A', 'B') and ${t.day} between 2 and 7)`,
+      sql`(${t.kind} = 'reminder' and not ${t.atExpiry}) or (${t.kind} = 'trigger' and ${t.segment} in ('A', 'B') and ${t.day} between 2 and 30)`,
     ),
     check(
       "message_templates_statuses_values",
@@ -427,6 +434,7 @@ export const sentMessages = pgTable(
     telegramMessageId: bigint("telegram_message_id", { mode: "number" }),
     sentAt: timestamp("sent_at", { withTimezone: true }),
     sendError: text("send_error"),
+    deleteAt: timestamp("delete_at", { withTimezone: true }),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     deleteError: text("delete_error"),
     clickedAt: timestamp("clicked_at", { withTimezone: true }),
@@ -592,3 +600,85 @@ export const videoRolloutRecipients = pgTable(
 );
 
 export type VideoRolloutRecipient = typeof videoRolloutRecipients.$inferSelect;
+
+export const courses = pgTable("courses", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  name: text("name").notNull().unique(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export type Course = typeof courses.$inferSelect;
+
+export const tariffs = pgTable(
+  "tariffs",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    courseId: bigint("course_id", { mode: "number" })
+      .notNull()
+      .references(() => courses.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    price: integer("price").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex("tariffs_course_name_idx").on(t.courseId, t.name)],
+);
+
+export type Tariff = typeof tariffs.$inferSelect;
+
+export const studyGroups = pgTable("study_groups", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  name: text("name").notNull().unique(),
+  courseId: bigint("course_id", { mode: "number" }).references(() => courses.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export type StudyGroup = typeof studyGroups.$inferSelect;
+
+export const enrollments = pgTable(
+  "enrollments",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    userId: bigint("user_id", { mode: "number" }).references(() => users.id, { onDelete: "set null" }),
+    studentName: text("student_name").notNull(),
+    phone: text("phone"),
+    telegramId: bigint("telegram_id", { mode: "number" }),
+    username: text("username"),
+    sourceNetwork: text("source_network", { enum: sourceNetworks }).default("organic").notNull(),
+    courseId: bigint("course_id", { mode: "number" }).references(() => courses.id, { onDelete: "set null" }),
+    courseName: text("course_name").notNull(),
+    tariffId: bigint("tariff_id", { mode: "number" }).references(() => tariffs.id, { onDelete: "set null" }),
+    tariffName: text("tariff_name").notNull(),
+    groupId: bigint("group_id", { mode: "number" }).references(() => studyGroups.id, { onDelete: "set null" }),
+    groupName: text("group_name"),
+    totalPrice: integer("total_price").notNull(),
+    currentMonthDue: integer("current_month_due").default(0).notNull(),
+    dueDate: text("due_date"),
+    notes: text("notes"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("enrollments_user_id_idx").on(t.userId),
+    index("enrollments_group_id_idx").on(t.groupId),
+    index("enrollments_source_network_idx").on(t.sourceNetwork),
+  ],
+);
+
+export type Enrollment = typeof enrollments.$inferSelect;
+
+export const payments = pgTable(
+  "payments",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    enrollmentId: bigint("enrollment_id", { mode: "number" })
+      .notNull()
+      .references(() => enrollments.id, { onDelete: "cascade" }),
+    amount: integer("amount").notNull(),
+    paidAt: timestamp("paid_at", { withTimezone: true }).defaultNow().notNull(),
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("payments_enrollment_id_idx").on(t.enrollmentId)],
+);
+
+export type Payment = typeof payments.$inferSelect;

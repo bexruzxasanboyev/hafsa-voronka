@@ -119,4 +119,23 @@ export const adminLeadsResponseSchema = z.object({
   totalPages: z.number(),
 });
 
+export const campaignLinkCreateSchema = z.object({
+  code: z
+    .string()
+    .trim()
+    .regex(/^[A-Za-z0-9_-]{2,48}$/)
+    .optional(),
+  utm_source: z.string().trim().min(1).max(200),
+  utm_campaign: z.string().trim().max(200).optional(),
+  utm_content: z.string().trim().max(200).optional(),
+});
+
+export type CampaignLinkItem = {
+  code: string;
+  utmSource: string | null;
+  utmCampaign: string | null;
+  utmContent: string | null;
+  createdAt: string;
+};
+
 export type AdminLeadsResponse = z.infer<typeof adminLeadsResponseSchema>;

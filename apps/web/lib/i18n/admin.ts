@@ -2,6 +2,7 @@ export const adminUz = {
   nav: {
     stats: "Statistika",
     reports: "Hisobotlar",
+    payments: "To‘lovlar va qarzlar",
     messages: "Eslatmalar",
     videos: "Videolar",
     botTexts: "Bot matnlari",
@@ -15,7 +16,7 @@ export const adminUz = {
   pages: {
     stats: { title: "Statistika", description: "Saytdan adminga yozishgacha bo‘lgan yo‘l, tanlangan davr uchun." },
     reports: { title: "Hisobotlar", description: "Har bir video va eslatma qanday natija bergani." },
-    messages: { title: "Eslatmalar", description: "Bot 7 kun davomida avtomatik yuboradigan xabarlar." },
+    messages: { title: "Eslatmalar", description: "Bot 30 kun davomida avtomatik yuboradigan xabarlar." },
     videos: { title: "Videolar", description: "Yangi foydalanuvchilarga beriladigan dars videosi." },
     botTexts: { title: "Bot matnlari", description: "Botning doimiy javoblari va tugma nomlari. Saqlangan o‘zgarish botda darhol ishlaydi." },
     settings: { title: "Sozlamalar", description: "Havola muddati, chatni tozalash va boshqa umumiy sozlamalar." },

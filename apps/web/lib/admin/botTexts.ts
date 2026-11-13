@@ -26,11 +26,19 @@ export function fetchBotTexts() {
   return call("");
 }
 
-export function saveBotText(key: BotTextKey, text: string) {
+export function saveBotText(
+  key: BotTextKey,
+  text: string,
+  options?: { scheduledAt?: string | null; autoDeleteMinutes?: number | null },
+) {
   return call(`/${key}`, {
     method: "PUT",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({
+      text,
+      ...(options?.scheduledAt !== undefined ? { scheduledAt: options.scheduledAt } : {}),
+      ...(options?.autoDeleteMinutes !== undefined ? { autoDeleteMinutes: options.autoDeleteMinutes } : {}),
+    }),
   });
 }
 

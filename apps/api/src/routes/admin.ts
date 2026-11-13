@@ -1,9 +1,14 @@
+import crypto from "node:crypto";
+import { desc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import {
   adminLeadsQuerySchema,
   adminLoginRequestSchema,
   adminStatsQuerySchema,
+  campaignLinkCreateSchema,
 } from "@funnel/shared";
+import { db } from "@/db";
+import { campaignLinks } from "@/db/schema";
 import {
   clearAdminSessionCookie,
   getAdminPasswordHash,
@@ -30,6 +35,7 @@ import { adminVideoRoutes } from "@/routes/adminVideos";
 import { adminMessageRoutes } from "@/routes/adminMessages";
 import { adminReportRoutes } from "@/routes/adminReports";
 import { adminSettingsRoutes } from "@/routes/adminSettings";
+import { adminPaymentRoutes } from "@/routes/adminPayments";
 
 export const adminRoutes = new Hono();
 
@@ -40,6 +46,7 @@ adminRoutes.route("/videos", adminVideoRoutes);
 adminRoutes.route("/messages", adminMessageRoutes);
 adminRoutes.route("/reports", adminReportRoutes);
 adminRoutes.route("/settings", adminSettingsRoutes);
+adminRoutes.route("/payments", adminPaymentRoutes);
 
 adminRoutes.post("/login", async (c) => {
   const ip = clientIp(c);
@@ -127,6 +134,60 @@ adminRoutes.get("/leads", requireAdminAuth, async (c) => {
 
   const result = await getLeads(filters, query.data.page, 50);
   return c.json(result);
+});
+
+adminRoutes.get("/campaign-links", requireAdminAuth, async (c) => {
+  const rows = await db().select().from(campaignLinks).orderBy(desc(campaignLinks.createdAt));
+  return c.json({
+    items: rows.map((r) => ({
+      code: r.code,
+      utmSource: r.utm?.utm_source ?? null,
+      utmCampaign: r.utm?.utm_campaign ?? null,
+      utmContent: r.utm?.utm_content ?? null,
+      createdAt: r.createdAt.toISOString(),
+    })),
+  });
+});
+
+adminRoutes.post("/campaign-links", requireAdminAuth, async (c) => {
+  const body = campaignLinkCreateSchema.safeParse(await c.req.json().catch(() => null));
+  if (!body.success) return c.json({ error: "invalid_request" }, 400);
+
+  const code =
+    body.data.code ||
+    `${body.data.utm_source.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 8) || "ad"}_${crypto.randomBytes(3).toString("hex")}`;
+
+  const [row] = await db()
+    .insert(campaignLinks)
+    .values({
+      code,
+      utm: {
+        utm_source: body.data.utm_source,
+        utm_campaign: body.data.utm_campaign || undefined,
+        utm_content: body.data.utm_content || undefined,
+      },
+    })
+    .onConflictDoNothing()
+    .returning();
+
+  if (!row) return c.json({ error: "code_exists" }, 409);
+
+  return c.json(
+    {
+      code: row.code,
+      utmSource: row.utm?.utm_source ?? null,
+      utmCampaign: row.utm?.utm_campaign ?? null,
+      utmContent: row.utm?.utm_content ?? null,
+      createdAt: row.createdAt.toISOString(),
+    },
+    201,
+  );
+});
+
+adminRoutes.delete("/campaign-links/:code", requireAdminAuth, async (c) => {
+  const code = c.req.param("code");
+  await db().delete(campaignLinks).where(eq(campaignLinks.code, code));
+  return c.json({ ok: true });
 });
 
 adminRoutes.get("/leads.csv", requireAdminAuth, async (c) => {

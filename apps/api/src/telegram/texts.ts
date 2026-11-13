@@ -113,6 +113,9 @@ export async function listBotTexts(): Promise<BotTextItem[]> {
       defaultText: defaultBotTexts[key],
       text: row?.text ?? null,
       media: row?.mediaFileId && row.mediaType ? { type: row.mediaType as BotMediaType } : null,
+      scheduledAt: row?.scheduledAt ? row.scheduledAt.toISOString() : null,
+      scheduledSentAt: row?.scheduledSentAt ? row.scheduledSentAt.toISOString() : null,
+      autoDeleteMinutes: row?.autoDeleteMinutes ?? null,
       updatedAt: row?.updatedAt.toISOString() ?? null,
     };
   });
@@ -122,7 +125,10 @@ export async function findBotText(key: BotTextKey) {
   return (await overrides()).get(key);
 }
 
-async function upsert(key: BotTextKey, values: Partial<Pick<BotTextRow, "text" | "mediaType" | "mediaFileId">>) {
+async function upsert(
+  key: BotTextKey,
+  values: Partial<Pick<BotTextRow, "text" | "mediaType" | "mediaFileId" | "scheduledAt" | "scheduledSentAt" | "autoDeleteMinutes">>,
+) {
   await db()
     .insert(botTexts)
     .values({ key, ...values, updatedAt: new Date() })
@@ -130,8 +136,23 @@ async function upsert(key: BotTextKey, values: Partial<Pick<BotTextRow, "text" |
   invalidateBotTexts();
 }
 
-export async function saveBotText(key: BotTextKey, text: string) {
-  await upsert(key, { text: text === defaultBotTexts[key] ? null : text });
+export async function saveBotText(
+  key: BotTextKey,
+  text: string,
+  options?: { scheduledAt?: string | null; autoDeleteMinutes?: number | null },
+) {
+  const existing = await findBotText(key);
+  const scheduledAt =
+    options?.scheduledAt === undefined ? undefined : options.scheduledAt ? new Date(options.scheduledAt) : null;
+  const scheduledChanged =
+    scheduledAt !== undefined &&
+    (scheduledAt?.getTime() ?? null) !== (existing?.scheduledAt?.getTime() ?? null);
+  await upsert(key, {
+    text: text === defaultBotTexts[key] ? null : text,
+    ...(scheduledAt !== undefined ? { scheduledAt } : {}),
+    ...(scheduledChanged ? { scheduledSentAt: null } : {}),
+    ...(options?.autoDeleteMinutes !== undefined ? { autoDeleteMinutes: options.autoDeleteMinutes } : {}),
+  });
 }
 
 export async function resetBotText(key: BotTextKey) {

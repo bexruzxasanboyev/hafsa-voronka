@@ -1,6 +1,6 @@
 "use client";
 
-import type { TimingError } from "@funnel/shared";
+import type { TimingError, TimingMode as TemplateTimingMode } from "@funnel/shared";
 import { Field, Input } from "@/components/admin/ui/Field";
 import { Segmented } from "@/components/admin/ui/Segmented";
 import { TimePicker } from "@/components/admin/ui/TimePicker";
@@ -16,7 +16,7 @@ function clamp(raw: string, max: number) {
 type TimingPickerProps = {
   subject: TimingSubject;
   minute: number;
-  onChange: (values: { minute?: number; atExpiry?: boolean }) => void;
+  onChange: (values: { minute?: number; atExpiry?: boolean; timingMode?: TemplateTimingMode }) => void;
   error: TimingError | null;
 };
 
@@ -36,6 +36,24 @@ export function TimingPicker({ subject, minute, onChange, error }: TimingPickerP
 
   return (
     <div className="flex flex-col gap-3">
+      {!isTrigger && (
+        <Segmented
+          label="Yuborish rejimi"
+          fill
+          value={subject.timingMode ?? "interval"}
+          onChange={(next) =>
+            onChange({
+              timingMode: next as TemplateTimingMode,
+              ...(next === "exact_time" && minute < 60 ? { minute: 600 } : {}),
+            })
+          }
+          items={[
+            { value: "interval", label: "Nisbiy vaqt (Interval)" },
+            { value: "exact_time", label: "Aniq soatda (HH:MM)" },
+          ]}
+        />
+      )}
+
       {isTrigger && (
         <Segmented
           label={copy.triggerTiming.label}

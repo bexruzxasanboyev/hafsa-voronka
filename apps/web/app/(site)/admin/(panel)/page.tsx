@@ -9,7 +9,8 @@ import { DateRangeFilter } from "@/components/admin/DateRangeFilter";
 import { DropoffBars } from "@/components/admin/DropoffBars";
 import { FunnelChart } from "@/components/admin/FunnelChart";
 import { KpiCards } from "@/components/admin/KpiCards";
-import { buttonClass } from "@/components/admin/ui/Button";
+import { TelegramAdsLinkDialog } from "@/components/admin/TelegramAdsLinkDialog";
+import { Button, buttonClass } from "@/components/admin/ui/Button";
 import { Field, Input } from "@/components/admin/ui/Field";
 import { Page, PageHeader } from "@/components/admin/ui/Page";
 import { ErrorState, LoadingState } from "@/components/admin/ui/States";
@@ -36,6 +37,7 @@ function AdminDashboardContent() {
   const [attempt, setAttempt] = useState(0);
   const [draftSource, setDraftSource] = useState(source);
   const [draftCampaign, setDraftCampaign] = useState(campaign);
+  const [linksOpen, setLinksOpen] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -97,20 +99,54 @@ function AdminDashboardContent() {
   };
 
   const csvAction = (
-    <a
-      href={getLeadsCsvUrl({ from, to, source, campaign })}
-      download="leads.csv"
-      aria-label={adminUz.leads.exportCsvLabel}
-      title={adminUz.leads.exportCsvLabel}
-      className={buttonClass({ variant: "secondary" })}
-    >
-      <DownloadIcon className="h-4 w-4" />
-      {adminUz.leads.exportCsv}
-    </a>
+    <div className="flex flex-wrap items-center gap-2">
+      <Button variant="secondary" onClick={() => setLinksOpen(true)}>
+        Telegram Ads havola
+      </Button>
+      <a
+        href={getLeadsCsvUrl({ from, to, source, campaign })}
+        download="leads.csv"
+        aria-label={adminUz.leads.exportCsvLabel}
+        title={adminUz.leads.exportCsvLabel}
+        className={buttonClass({ variant: "secondary" })}
+      >
+        <DownloadIcon className="h-4 w-4" />
+        {adminUz.leads.exportCsv}
+      </a>
+    </div>
   );
+
+  const quickSources = [
+    { label: "Barchasi", value: "" },
+    { label: "Instagram (ig)", value: "ig" },
+    { label: "Facebook (fb)", value: "fb" },
+    { label: "Telegram Ads (tg)", value: "tg" },
+  ];
 
   const extra = (
     <>
+      <div className="flex flex-wrap items-center gap-1.5 self-end pb-1">
+        {quickSources.map((preset) => {
+          const active = source === preset.value;
+          return (
+            <button
+              key={preset.label}
+              type="button"
+              onClick={() => {
+                setDraftSource(preset.value);
+                updateFilters({ from, to, source: preset.value, campaign });
+              }}
+              className={`rounded-lg px-2.5 py-1.5 text-xs font-medium transition cursor-pointer ${
+                active
+                  ? "bg-siyoh text-varaq"
+                  : "bg-qumloq text-siyoh hover:bg-chiziq"
+              }`}
+            >
+              {preset.label}
+            </button>
+          );
+        })}
+      </div>
       <Field label={adminUz.filters.sourceLabel} className="lg:w-40">
         {({ id }) => <Input id={id} value={draftSource} onChange={(e) => setDraftSource(e.target.value)} />}
       </Field>
@@ -162,6 +198,8 @@ function AdminDashboardContent() {
           <CampaignTable campaigns={stats.campaigns} />
         </>
       )}
+
+      <TelegramAdsLinkDialog open={linksOpen} onClose={() => setLinksOpen(false)} />
     </Page>
   );
 }

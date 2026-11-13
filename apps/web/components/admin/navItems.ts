@@ -13,6 +13,7 @@ export type NavItem = {
 export const navItems: NavItem[] = [
   { href: "/admin", label: adminUz.nav.stats, icon: ChartIcon, group: "results", mobile: "bar" },
   { href: "/admin/reports", label: adminUz.nav.reports, icon: TableIcon, group: "results", mobile: "bar" },
+  { href: "/admin/payments", label: adminUz.nav.payments, icon: TableIcon, group: "results", mobile: "more" },
   { href: "/admin/messages", label: adminUz.nav.messages, icon: ChatIcon, group: "bot", mobile: "bar" },
   { href: "/admin/videos", label: adminUz.nav.videos, icon: PlayIcon, group: "bot", mobile: "bar" },
   { href: "/admin/bot", label: adminUz.nav.botTexts, icon: TextIcon, group: "bot", mobile: "more" },

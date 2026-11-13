@@ -2,8 +2,12 @@ import {
   chatCleanupHoursSchema,
   DEFAULT_CHAT_CLEANUP_HOURS,
   DEFAULT_MESSAGE_CAPS,
+  DEFAULT_QUIET_HOURS_ENABLED,
+  DEFAULT_SEGMENT_LOOPS,
   type MessageCaps,
   messageCapsSchema,
+  type SegmentLoops,
+  segmentLoopsSchema,
 } from "@funnel/shared";
 import { db } from "@/db";
 import { settings } from "@/db/schema";
@@ -43,4 +47,22 @@ export async function chatCleanupHours(): Promise<number> {
   const raw = (await allSettings()).get("CHAT_CLEANUP_HOURS");
   const parsed = chatCleanupHoursSchema.safeParse(Number(raw));
   return raw !== undefined && parsed.success ? parsed.data : DEFAULT_CHAT_CLEANUP_HOURS;
+}
+
+export async function quietHoursEnabled(): Promise<boolean> {
+  const raw = (await allSettings()).get("QUIET_HOURS_ENABLED");
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  return DEFAULT_QUIET_HOURS_ENABLED;
+}
+
+export async function segmentLoops(): Promise<SegmentLoops> {
+  const raw = (await allSettings()).get("SEGMENT_LOOPS");
+  if (raw === undefined) return DEFAULT_SEGMENT_LOOPS;
+  try {
+    const parsed = segmentLoopsSchema.safeParse(JSON.parse(raw));
+    return parsed.success ? parsed.data : DEFAULT_SEGMENT_LOOPS;
+  } catch {
+    return DEFAULT_SEGMENT_LOOPS;
+  }
 }
