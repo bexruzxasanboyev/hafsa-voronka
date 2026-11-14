@@ -23,12 +23,20 @@ import {
   type BroadcastButton,
   driveImportErrors,
   driveImportStatuses,
+  enrollmentStatuses,
   eventTypes,
   funnelSegments,
   type FunnelStatus,
   linkGrantKinds,
   offerAnswers,
   offerVariants,
+  paymentMethods,
+  paymentRecordStatuses,
+  type ReceiptOcrResult,
+  receiptMediaTypes,
+  receiptOcrStatuses,
+  receiptSources,
+  receiptStatuses,
   type RolloutAudience,
   rolloutAudiences,
   rolloutStatuses,
@@ -737,3 +745,196 @@ export const scheduledBroadcastRecipients = pgTable(
 );
 
 export type ScheduledBroadcastRecipientRow = typeof scheduledBroadcastRecipients.$inferSelect;
+
+export const courses = pgTable("courses", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  title: text("title").notNull(),
+  description: text("description"),
+  isActive: boolean("is_active").default(true).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export type CourseRow = typeof courses.$inferSelect;
+
+export const tariffs = pgTable(
+  "tariffs",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    courseId: bigint("course_id", { mode: "number" })
+      .notNull()
+      .references(() => courses.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    priceUzs: bigint("price_uzs", { mode: "number" }).notNull(),
+    allowsInstallments: boolean("allows_installments").default(true).notNull(),
+    defaultInstallmentMonths: smallint("default_installment_months").default(1).notNull(),
+    isActive: boolean("is_active").default(true).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    check("tariffs_price_nonnegative", sql`${t.priceUzs} >= 0`),
+    check("tariffs_default_installment_months_range", sql`${t.defaultInstallmentMonths} between 1 and 36`),
+  ],
+);
+
+export type TariffRow = typeof tariffs.$inferSelect;
+
+export const studyGroups = pgTable(
+  "study_groups",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    name: text("name").notNull(),
+    courseId: bigint("course_id", { mode: "number" }).references(() => courses.id, { onDelete: "set null" }),
+    startsAt: text("starts_at"),
+    capacity: integer("capacity"),
+    isActive: boolean("is_active").default(true).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    check("study_groups_starts_at_format", sql`${t.startsAt} is null or ${t.startsAt} ~ '^\\d{4}-\\d{2}-\\d{2}$'`),
+    check("study_groups_capacity_positive", sql`${t.capacity} is null or ${t.capacity} > 0`),
+  ],
+);
+
+export type StudyGroupRow = typeof studyGroups.$inferSelect;
+
+export const enrollments = pgTable(
+  "enrollments",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    userId: bigint("user_id", { mode: "number" })
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    courseId: bigint("course_id", { mode: "number" })
+      .notNull()
+      .references(() => courses.id, { onDelete: "restrict" }),
+    tariffId: bigint("tariff_id", { mode: "number" })
+      .notNull()
+      .references(() => tariffs.id, { onDelete: "restrict" }),
+    studyGroupId: bigint("study_group_id", { mode: "number" }).references(() => studyGroups.id, {
+      onDelete: "set null",
+    }),
+    status: text("status", { enum: enrollmentStatuses }).default("active").notNull(),
+    contractAmountUzs: bigint("contract_amount_uzs", { mode: "number" }).notNull(),
+    installmentMonths: smallint("installment_months").default(1).notNull(),
+    note: text("note"),
+    enrolledAt: timestamp("enrolled_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("enrollments_user_id_idx").on(t.userId),
+    index("enrollments_study_group_id_idx").on(t.studyGroupId),
+    index("enrollments_course_id_idx").on(t.courseId),
+    index("enrollments_status_idx").on(t.status),
+    check("enrollments_status_values", sql`${t.status} in ('active','completed','cancelled')`),
+    check("enrollments_contract_positive", sql`${t.contractAmountUzs} > 0`),
+    check("enrollments_installment_months_range", sql`${t.installmentMonths} between 1 and 36`),
+  ],
+);
+
+export type EnrollmentRow = typeof enrollments.$inferSelect;
+
+export const enrollmentInstallments = pgTable(
+  "enrollment_installments",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    enrollmentId: bigint("enrollment_id", { mode: "number" })
+      .notNull()
+      .references(() => enrollments.id, { onDelete: "cascade" }),
+    installmentNo: smallint("installment_no").notNull(),
+    dueDate: text("due_date").notNull(),
+    amountUzs: bigint("amount_uzs", { mode: "number" }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("enrollment_installments_enrollment_no_uidx").on(t.enrollmentId, t.installmentNo),
+    index("enrollment_installments_enrollment_due_idx").on(t.enrollmentId, t.dueDate),
+    check("enrollment_installments_no_positive", sql`${t.installmentNo} >= 1`),
+    check("enrollment_installments_due_date_format", sql`${t.dueDate} ~ '^\\d{4}-\\d{2}-\\d{2}$'`),
+    check("enrollment_installments_amount_nonnegative", sql`${t.amountUzs} >= 0`),
+  ],
+);
+
+export type EnrollmentInstallmentRow = typeof enrollmentInstallments.$inferSelect;
+
+export const paymentReceipts = pgTable(
+  "payment_receipts",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    userId: bigint("user_id", { mode: "number" }).references(() => users.id, { onDelete: "set null" }),
+    enrollmentId: bigint("enrollment_id", { mode: "number" }).references(() => enrollments.id, {
+      onDelete: "set null",
+    }),
+    paymentId: bigint("payment_id", { mode: "number" }),
+    source: text("source", { enum: receiptSources }).notNull(),
+    status: text("status", { enum: receiptStatuses }).default("pending").notNull(),
+    mediaType: text("media_type", { enum: receiptMediaTypes }).notNull(),
+    fileId: text("file_id").notNull(),
+    fileName: text("file_name"),
+    mimeType: text("mime_type"),
+    fileSize: bigint("file_size", { mode: "number" }),
+    businessConnectionId: text("business_connection_id"),
+    telegramMessageId: bigint("telegram_message_id", { mode: "number" }),
+    senderTelegramId: bigint("sender_telegram_id", { mode: "number" }),
+    senderUsername: text("sender_username"),
+    senderName: text("sender_name"),
+    caption: text("caption"),
+    ocrStatus: text("ocr_status", { enum: receiptOcrStatuses }).default("skipped").notNull(),
+    ocrResult: jsonb("ocr_result").$type<ReceiptOcrResult>(),
+    ocrError: text("ocr_error"),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("payment_receipts_business_msg_uidx")
+      .on(t.businessConnectionId, t.telegramMessageId)
+      .where(sql`${t.businessConnectionId} is not null and ${t.telegramMessageId} is not null`),
+    index("payment_receipts_status_created_idx").on(t.status, t.createdAt),
+    check("payment_receipts_source_values", sql`${t.source} in ('business_dm','admin_upload')`),
+    check("payment_receipts_status_values", sql`${t.status} in ('pending','confirmed','rejected')`),
+    check("payment_receipts_media_type_values", sql`${t.mediaType} in ('photo','pdf')`),
+    check("payment_receipts_ocr_status_values", sql`${t.ocrStatus} in ('skipped','ok','failed')`),
+  ],
+);
+
+export type PaymentReceiptRow = typeof paymentReceipts.$inferSelect;
+
+export const payments = pgTable(
+  "payments",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    enrollmentId: bigint("enrollment_id", { mode: "number" })
+      .notNull()
+      .references(() => enrollments.id, { onDelete: "cascade" }),
+    userId: bigint("user_id", { mode: "number" })
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    receiptId: bigint("receipt_id", { mode: "number" }).references(() => paymentReceipts.id, {
+      onDelete: "set null",
+    }),
+    amountUzs: bigint("amount_uzs", { mode: "number" }).notNull(),
+    paymentMethod: text("payment_method", { enum: paymentMethods }).notNull(),
+    status: text("status", { enum: paymentRecordStatuses }).default("verified").notNull(),
+    paidDate: text("paid_date").notNull(),
+    paidAt: timestamp("paid_at", { withTimezone: true }).defaultNow().notNull(),
+    reference: text("reference"),
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("payments_enrollment_status_paid_idx").on(t.enrollmentId, t.status, t.paidAt),
+    index("payments_receipt_id_idx").on(t.receiptId),
+    check("payments_amount_positive", sql`${t.amountUzs} > 0`),
+    check(
+      "payments_method_values",
+      sql`${t.paymentMethod} in ('click','payme','uzum','card_transfer','bank','cash','other')`,
+    ),
+    check("payments_status_values", sql`${t.status} in ('verified','refunded')`),
+    check("payments_paid_date_format", sql`${t.paidDate} ~ '^\\d{4}-\\d{2}-\\d{2}$'`),
+  ],
+);
+
+export type PaymentRow = typeof payments.$inferSelect;

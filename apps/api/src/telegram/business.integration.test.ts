@@ -3,7 +3,18 @@ import { asc, eq } from "drizzle-orm";
 import type { Bot } from "grammy";
 import { closeDb, db } from "@/db";
 import { runMigrations } from "@/db/migrate";
-import { businessConnections, campaignLinks, events, segmentRuns, users } from "@/db/schema";
+import {
+  businessConnections,
+  campaignLinks,
+  courses,
+  enrollments,
+  events,
+  linkGrants,
+  paymentReceipts,
+  segmentRuns,
+  tariffs,
+  users,
+} from "@/db/schema";
 import { setTestEnv } from "@/test/env";
 import { isolatedDatabase } from "@/test/isolatedDb";
 import { ensureActiveTestVideo } from "@/test/videos";
@@ -51,10 +62,15 @@ describe.skipIf(!testDbUrl)("Telegram Business lifecycle and Last-Touch attribut
   });
 
   beforeEach(async () => {
+    await db().delete(paymentReceipts);
+    await db().delete(enrollments);
+    await db().delete(tariffs);
+    await db().delete(courses);
     await db().delete(businessConnections);
     await db().delete(events);
     await db().delete(segmentRuns);
     await db().update(users).set({ linkId: null });
+    await db().delete(linkGrants);
     await db().delete(users);
     await db().delete(campaignLinks);
   });
@@ -310,5 +326,109 @@ describe.skipIf(!testDbUrl)("Telegram Business lifecycle and Last-Touch attribut
     expect(second.lastUtmCampaign).toBe("tg_camp_2");
     expect(second.lastUtmContent).toBe("post_b");
     expect(second.lastTouchAt!.getTime()).toBeGreaterThanOrEqual(first.lastTouchAt!.getTime());
+  });
+
+  it("captures inbound business DM photo and pdf receipts and deduplicates replays", async () => {
+    await sendBusinessConnection({
+      id: "conn_receipts",
+      userId: ADMIN_TELEGRAM_ID,
+    });
+
+    const customerTgId = 900_000_010;
+    const [customer] = await db()
+      .insert(users)
+      .values({ telegramId: customerTgId, registeredAt: new Date(1_700_000_000_000) })
+      .returning();
+    const [course] = await db().insert(courses).values({ title: "SMM" }).returning();
+    const [tariff] = await db()
+      .insert(tariffs)
+      .values({ courseId: course.id, name: "Pro", priceUzs: 2_000_000 })
+      .returning();
+    const [enrollment] = await db()
+      .insert(enrollments)
+      .values({
+        userId: customer.id,
+        courseId: course.id,
+        tariffId: tariff.id,
+        contractAmountUzs: 2_000_000,
+      })
+      .returning();
+
+    const photoMessageId = 777_001;
+    const photoMessage = {
+      message_id: photoMessageId,
+      business_connection_id: "conn_receipts",
+      date: 1_700_000_400,
+      chat: { id: customerTgId, type: "private", first_name: "Customer" },
+      from: {
+        id: customerTgId,
+        is_bot: false,
+        first_name: "Ali",
+        username: "ali_pay",
+      },
+      photo: [
+        { file_id: "small_file", file_unique_id: "s1", width: 90, height: 90, file_size: 1200 },
+        { file_id: "large_file", file_unique_id: "l1", width: 800, height: 1200, file_size: 54000 },
+      ],
+      caption: "To'lov cheki",
+    };
+
+    await testBot.handleUpdate({ update_id: updateId++, business_message: photoMessage } as never);
+    await testBot.handleUpdate({ update_id: updateId++, business_message: photoMessage } as never);
+
+    const unknownSenderTgId = 900_000_011;
+    await testBot.handleUpdate({
+      update_id: updateId++,
+      business_message: {
+        message_id: 777_002,
+        business_connection_id: "conn_receipts",
+        date: 1_700_000_500,
+        chat: { id: unknownSenderTgId, type: "private", first_name: "Guest" },
+        from: {
+          id: unknownSenderTgId,
+          is_bot: false,
+          first_name: "Guest",
+          last_name: "User",
+          username: "guest_u",
+        },
+        document: {
+          file_id: "pdf_file_id",
+          file_unique_id: "p1",
+          file_name: "chek.pdf",
+          mime_type: "application/pdf",
+          file_size: 88_000,
+        },
+      },
+    } as never);
+
+    const rows = await db().select().from(paymentReceipts).orderBy(asc(paymentReceipts.id));
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({
+      userId: customer.id,
+      enrollmentId: enrollment.id,
+      source: "business_dm",
+      status: "pending",
+      mediaType: "photo",
+      fileId: "large_file",
+      businessConnectionId: "conn_receipts",
+      telegramMessageId: photoMessageId,
+      senderTelegramId: customerTgId,
+      senderUsername: "ali_pay",
+      caption: "To'lov cheki",
+      ocrStatus: "skipped",
+    });
+    expect(rows[1]).toMatchObject({
+      userId: null,
+      enrollmentId: null,
+      source: "business_dm",
+      status: "pending",
+      mediaType: "pdf",
+      fileId: "pdf_file_id",
+      fileName: "chek.pdf",
+      mimeType: "application/pdf",
+      senderTelegramId: unknownSenderTgId,
+      senderUsername: "guest_u",
+      senderName: "Guest User",
+    });
   });
 });

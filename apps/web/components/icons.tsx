@@ -436,3 +436,30 @@ export function ArchiveIcon({ className }: IconProps) {
     </StrokeIcon>
   );
 }
+
+export function WalletIcon({ className }: IconProps) {
+  return (
+    <StrokeIcon className={className} strokeWidth={1.8}>
+      <rect x="3" y="5" width="18" height="14" rx="2.5" />
+      <path d="M15 10h6v4h-6a2 2 0 0 1 0-4Z" />
+      <circle cx="15.5" cy="12" r="0.6" />
+    </StrokeIcon>
+  );
+}
+
+export function UploadIcon({ className }: IconProps) {
+  return (
+    <StrokeIcon className={className}>
+      <path d="M12 15V4M7 9l5-5 5 5M5 20h14" />
+    </StrokeIcon>
+  );
+}
+
+export function ReceiptIcon({ className }: IconProps) {
+  return (
+    <StrokeIcon className={className} strokeWidth={1.8}>
+      <path d="M6 3h12v18l-3-2-3 2-3-2-3 2V3Z" />
+      <path d="M9 8h6M9 12h6M9 16h4" />
+    </StrokeIcon>
+  );
+}

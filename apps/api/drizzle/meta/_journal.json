@@ -204,6 +204,13 @@
       "when": 1793240000000,
       "tag": "0028_reminders_and_broadcasts",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1793320000000,
+      "tag": "0029_payments_and_debts",
+      "breakpoints": true
     }
   ]
 }

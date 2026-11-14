@@ -5,6 +5,7 @@ import { db } from "@/db";
 import { businessConnections } from "@/db/schema";
 import { markWroteAdmin, touchAdminChat } from "@/funnel/channel";
 import { findByTelegramId } from "@/funnel/users";
+import { captureBusinessReceipt, extractReceiptAttachment } from "@/payments/receipts";
 import { isAdminTelegramId } from "@/telegram/admins";
 
 export async function upsertBusinessConnection(conn: BusinessConnection): Promise<void> {
@@ -56,18 +57,37 @@ export async function handleBusinessMessage(msg: Message): Promise<void> {
   if (customerTelegramId === conn.userTelegramId) return;
 
   const user = await findByTelegramId(customerTelegramId);
-  if (!user) return;
-
   const at = new Date(msg.date * 1000);
   const inbound = msg.from?.id === customerTelegramId;
+
+  if (user) {
+    if (inbound) {
+      const marked = await markWroteAdmin(user.id, { id: conn.userTelegramId }, at, {
+        via: "business",
+        businessConnectionId: conn.id,
+      });
+      if (!marked) await touchAdminChat(user.id, at);
+    } else if (msg.from?.id === conn.userTelegramId) {
+      await touchAdminChat(user.id, at);
+    }
+  }
+
   if (inbound) {
-    const marked = await markWroteAdmin(user.id, { id: conn.userTelegramId }, at, {
-      via: "business",
-      businessConnectionId: conn.id,
-    });
-    if (!marked) await touchAdminChat(user.id, at);
-  } else if (msg.from?.id === conn.userTelegramId) {
-    await touchAdminChat(user.id, at);
+    const attachment = extractReceiptAttachment(msg);
+    if (attachment) {
+      const senderName =
+        [msg.from?.first_name, msg.from?.last_name].filter(Boolean).join(" ").trim() || null;
+      await captureBusinessReceipt({
+        userId: user?.id ?? null,
+        attachment,
+        businessConnectionId: conn.id,
+        telegramMessageId: msg.message_id,
+        senderTelegramId: customerTelegramId,
+        senderUsername: msg.from?.username ?? null,
+        senderName,
+        caption: msg.caption ?? null,
+      });
+    }
   }
 }
 

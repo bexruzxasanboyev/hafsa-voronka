@@ -1,5 +1,5 @@
 import type { ComponentType } from "react";
-import { ChartIcon, ChatIcon, PlayIcon, SettingsIcon, TableIcon, TextIcon } from "@/components/icons";
+import { ChartIcon, ChatIcon, PlayIcon, SettingsIcon, TableIcon, TextIcon, WalletIcon } from "@/components/icons";
 import { adminUz } from "@/lib/i18n/admin";
 
 export type NavItem = {
@@ -12,9 +12,10 @@ export type NavItem = {
 
 export const navItems: NavItem[] = [
   { href: "/admin", label: adminUz.nav.stats, icon: ChartIcon, group: "results", mobile: "bar" },
+  { href: "/admin/payments", label: adminUz.nav.payments, icon: WalletIcon, group: "results", mobile: "bar" },
   { href: "/admin/reports", label: adminUz.nav.reports, icon: TableIcon, group: "results", mobile: "bar" },
   { href: "/admin/messages", label: adminUz.nav.messages, icon: ChatIcon, group: "bot", mobile: "bar" },
-  { href: "/admin/videos", label: adminUz.nav.videos, icon: PlayIcon, group: "bot", mobile: "bar" },
+  { href: "/admin/videos", label: adminUz.nav.videos, icon: PlayIcon, group: "bot", mobile: "more" },
   { href: "/admin/bot", label: adminUz.nav.botTexts, icon: TextIcon, group: "bot", mobile: "more" },
   { href: "/admin/settings", label: adminUz.nav.settings, icon: SettingsIcon, group: "footer", mobile: "more" },
 ];

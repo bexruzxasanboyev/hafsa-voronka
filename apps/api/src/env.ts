@@ -68,6 +68,8 @@ const schema = z
     BOT_WEBHOOK_URL: z.url().optional(),
     ADMIN_PASSWORD_HASH: z.string().optional(),
     SESSION_SECRET: z.string().min(32).optional(),
+    GEMINI_API_KEY: z.string().min(1).optional(),
+    GEMINI_OCR_MODEL: z.string().min(1).default("gemini-2.5-flash"),
   })
   .superRefine((data, ctx) => {
     const r2Keys = [

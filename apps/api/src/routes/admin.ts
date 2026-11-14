@@ -32,6 +32,7 @@ import { adminBroadcastRoutes } from "@/routes/adminBroadcasts";
 import { adminLinkRoutes } from "@/routes/adminLinks";
 import { adminVideoRoutes } from "@/routes/adminVideos";
 import { adminMessageRoutes } from "@/routes/adminMessages";
+import { adminPaymentRoutes } from "@/routes/adminPayments";
 import { adminReportRoutes } from "@/routes/adminReports";
 import { adminSettingsRoutes } from "@/routes/adminSettings";
 
@@ -44,6 +45,7 @@ adminRoutes.route("/broadcasts", adminBroadcastRoutes);
 adminRoutes.route("/links", adminLinkRoutes);
 adminRoutes.route("/videos", adminVideoRoutes);
 adminRoutes.route("/messages", adminMessageRoutes);
+adminRoutes.route("/payments", adminPaymentRoutes);
 adminRoutes.route("/reports", adminReportRoutes);
 adminRoutes.route("/settings", adminSettingsRoutes);
 

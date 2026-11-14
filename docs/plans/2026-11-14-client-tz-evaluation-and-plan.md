@@ -222,40 +222,44 @@ In `packages/shared/src/admin.ts`, `apps/api/src/admin/queries.ts`, and `/admin`
 
 ---
 
-## 5. Deferred Milestone 4 (`2-BO‘LIM §2.3` — Payments, Courses, Tariffs, Study Groups, Installments & AI Receipt OCR)
+## 5. Milestone 4 (`2-BO‘LIM §2.3` — Payments, Courses, Tariffs, Study Groups, Installments & AI Receipt OCR)
 
-**Status:** Deferred pending client operational decisions. Milestone 2 establishes the exact integration boundary (`users.paid_at` + First/Last-Touch attribution) so Milestone 4 plugs in without refactoring Milestones 1–3.
+**Status:** Resolved and scheduled for delivery on branch `feat/payments-and-debts`. Milestone 2 established the integration boundary (`users.paid_at`, `syncSegment`, and First/Last-Touch attribution), and Milestone 4 implements the full payments, installment ledger, group breakdown, and human-in-the-loop AI receipt OCR pipeline on top of `@funnel/shared` (`packages/shared/src/payments.ts`).
 
-### 5.1 Proposed Normalized Schema
+### 5.1 Normalized Schema & Shared Contracts (`packages/shared/src/payments.ts`)
 
 1. **`courses`**:
-   - `id`, `slug`, `title`, `description`, `is_active`, `created_at`.
+   - `id`, `title`, `description`, `is_active`, `created_at` (`courseInputSchema`, `courseItemSchema`).
 2. **`tariffs`**:
-   - `id`, `course_id -> courses.id`, `name` (e.g. Standard / VIP / Individual), `total_price_uzs bigint`, `duration_days integer`, `allows_installments boolean`, `is_active`.
+   - `id`, `course_id -> courses.id`, `name` (e.g. Standard / VIP / Individual), `price_uzs bigint`, `allows_installments boolean`, `default_installment_months integer`, `is_active`, `created_at` (`tariffInputSchema`, `tariffItemSchema`).
 3. **`study_groups`**:
-   - `id`, `course_id -> courses.id`, `name` (cohort / stream), `starts_at`, `capacity`, `telegram_group_url`, `curator_telegram_id`.
+   - `id`, `name` (cohort / stream), `course_id -> courses.id NULL`, `starts_at date NULL`, `capacity integer NULL`, `is_active`, `created_at` (`studyGroupInputSchema`, `studyGroupItemSchema`).
 4. **`enrollments`**:
-   - `id`, `user_id -> users.id`, `course_id -> courses.id`, `tariff_id -> tariffs.id`, `study_group_id -> study_groups.id NULL`, `lead_id -> leads.id NULL`, `status` (`pending | active | paused | completed | cancelled`), `total_due_uzs bigint`, `paid_uzs bigint`, `enrolled_at`, `expires_at`.
-   - **Milestone 2 Hook:** Creating/activating a paid enrollment sets `users.paid_at = COALESCE(users.paid_at, now)` and triggers `syncSegment(userId)` → closes any open funnel stage (`A`/`B`/`C`/`E`) with `endReason = 'bought'`. Attribution (`utm_*` First-Touch and `last_utm_*` Last-Touch) is snapshotted or joined from `users` for ROAS reporting by course/tariff/cohort.
-5. **`payments`** (supports full upfront payments and multi-part installments):
-   - `id`, `enrollment_id -> enrollments.id`, `user_id -> users.id`, `amount_uzs bigint`, `currency`, `payment_method` (`click | payme | uzum | card_transfer | cash`), `installment_no smallint NULL`, `due_date date NULL`, `status` (`pending_review | verified | rejected | refunded`), `receipt_file_id text NULL`, `ocr_payload jsonb NULL`, `verified_by_telegram_id bigint NULL`, `paid_at timestamptz NULL`, `created_at`.
+   - `id`, `user_id -> users.id`, `course_id -> courses.id`, `tariff_id -> tariffs.id`, `study_group_id -> study_groups.id NULL`, `status` (`active | completed | cancelled`), `contract_amount_uzs bigint`, `installment_months integer`, `note text NULL`, `enrolled_at`, `created_at`, `updated_at`.
+   - **Milestone 2 Hook:** Creating an enrollment with a verified payment or confirming a payment/receipt sets `users.paid_at = COALESCE(users.paid_at, now)` and triggers `syncSegment(userId)` → closes any open funnel stage (`A`/`B`/`C`/`E`) with `endReason = 'bought'`. First-Touch (`utm_*`) and Last-Touch (`last_utm_*`) attribution is resolved from `users` using `normalizeAttributionNetwork` (`ig | fb | tg | organic | other`) with selectable `attributionModel` (`"first" | "last"`).
+5. **`enrollment_installments`**:
+   - `id`, `enrollment_id -> enrollments.id`, `installment_no smallint`, `due_date date`, `amount_uzs bigint`.
+   - Default schedules generated via `buildDefaultInstallmentSchedule(contractAmountUzs, installmentMonths, firstDueDate)` put any integer division remainder onto `installmentNo = 1` and advance subsequent monthly due dates with `addCalendarMonths` (clamping to month-end, leap-year aware). Custom admin schedules are validated in `enrollmentCreateSchema` / `enrollmentUpdateSchema` so installment sums match `contractAmountUzs` with unique `installmentNo`.
+6. **`payments`**:
+   - `id`, `enrollment_id -> enrollments.id`, `user_id -> users.id`, `amount_uzs bigint`, `payment_method` (`click | payme | uzum | card_transfer | bank | cash | other`), `status` (`verified | refunded`), `paid_date date`, `paid_at timestamptz`, `reference text NULL`, `note text NULL`, `receipt_id -> payment_receipts.id NULL`, `created_at`.
+7. **`payment_receipts`**:
+   - `id`, `user_id -> users.id NULL`, `enrollment_id -> enrollments.id NULL`, `payment_id -> payments.id NULL`, `source` (`business_dm | admin_upload`), `status` (`pending | confirmed | rejected`), `media_type` (`photo | pdf`), `file_name`, `mime_type`, `file_size` (capped at `RECEIPT_MAX_BYTES = 15 MiB`), `media_url`, `ocr_status` (`skipped | ok | failed`), `ocr_result jsonb` (`receiptOcrResultSchema`), `ocr_error text NULL`, `reviewed_at`, `created_at`.
 
-### 5.2 Open Client Business Questions (Parked Before Implementation)
+### 5.2 Resolved Business Rules & Calculation Semantics
 
-Milestone 4 implementation is blocked on client confirmation of the following business rules:
-
-1. **Installment (`bo‘lib to‘lash`) Schedule Rules:**
-   - Fixed preset splits (e.g., 50%/50% or 3/6 equal parts) vs custom admin-entered per-student schedules?
-   - What happens on overdue installments: automated Telegram reminders only, or automatic temporary access suspension?
-2. **Due-Date Calendar Semantics:**
-   - Fixed calendar day of month (e.g. always the 5th of every month) vs rolling 30-day intervals from `enrolled_at`?
-3. **Partial Payments & Overpayment Allocation:**
-   - Can a student send two smaller transfers toward one installment? If they overpay, does the surplus credit the next installment automatically?
-4. **AI Receipt OCR Provider & Verification Workflow:**
-   - Which Uzbek P2P/bank receipt formats must be parsed (Click, Payme, Uzum, Humo/Uzcard screenshots, PDFs)?
-   - Which vision/OCR provider will be funded (`OpenAI` vs `Gemini` vs dedicated OCR) and what is the human-in-the-loop rule: auto-approve above a confidence + card-last-4 + amount match threshold, or always require one-click admin confirmation in Telegram?
-5. **Refunds / Transfers:**
-   - Does a full refund or tariff downgrade revert `users.paid_at` or simply mark the `enrollment` as `refunded`/`cancelled` while keeping historical attribution audit logs?
+1. **Installment (`bo‘lib to‘lash`) Schedule & Due-Date Calendar Semantics:**
+   - Schedules support both preset `N`-month splits (`buildDefaultInstallmentSchedule`) and custom per-student installment overrides (`installments[]`).
+   - Monthly due dates use calendar-month addition (`addCalendarMonths`) clamping days past month-end (e.g., `2026-01-31 + 1` → `2026-02-28`, `2024-01-31 + 1` → `2024-02-29`).
+2. **Oldest-First Payment Allocation & Debt Status (`computeEnrollmentFinancials`):**
+   - Installments are ordered `dueDate ASC, installmentNo ASC`, and verified payments (`verifiedPaidUzs`) are allocated oldest-first across installments (`paidUzs`, `remainingUzs`, `state: "paid" | "upcoming" | "overdue"` where `dueDate < todayYmd` marks unpaid installments `"overdue"`).
+   - Overpayments reduce `totalRemainingUzs` to `0` (`debtStatus = "paid"`), while `currentMonthDebtUzs`, `currentDueDate` (within `endOfCalendarMonth(todayYmd)`), `nextDueDate`, `maturedDueUzs`, and `maturedPaidUzs` power both the Master Table and `paymentsKpisSchema`.
+3. **Group Breakdown & Payment Discipline (`aggregateGroupBreakdowns`):**
+   - Excludes `status === "cancelled"` enrollments, keeps all configured groups (including zero-student cohorts), appends an unassigned bucket (`groupId: null`) only when active/completed unassigned enrollments exist, computes `disciplinePercent = maturedDueUzs > 0 ? round1(maturedPaidUzs / maturedDueUzs * 100) : studentsCount > 0 ? 100 : 0`, and sorts by `studentsCount DESC, totalContractUzs DESC, groupName ASC` (unassigned last).
+4. **AI Receipt OCR & Human-in-the-Loop Confirmation:**
+   - Receipts ingested from Business DMs (`business_dm`) or uploaded in `/admin/payments` (`admin_upload`, `photo | pdf`, `≤ 15 MiB`) run OCR extraction into `receiptOcrResultSchema` (`isReceipt`, `amountUzs`, `paidDate`, `paymentMethod`, `reference`, `confidence`).
+   - All receipts enter the review inbox (`pending`) and require explicit admin confirmation (`receiptConfirmInputSchema` discriminated union on `mode`: `"existing"` enrollment vs `"new_enrollment"`) or rejection before creating a verified `payments` row and marking `users.paid_at`.
+5. **Refunds & Cancellations:**
+   - Individual payments can be marked `"refunded"` (excluding them from `verifiedPaidUzs`), and enrollments can be marked `"cancelled"` (excluding them from active revenue/debt KPIs and group breakdowns) while preserving audit records and historical attribution logs.
 
 ---
 
@@ -266,4 +270,4 @@ Milestone 4 implementation is blocked on client confirmation of the following bu
 | **M1** | `1-BO‘LIM`: `/admin/links`, `Havolalar` drawer, Radix `<Select>` filters, `Tugatgan` column, direct-to-bot funnel math | No (reuses `campaign_links`) | `pnpm typecheck`, `pnpm lint`, `pnpm test`, live `/start c_<code>` + `/admin` filter verification |
 | **M2** | `2-BO‘LIM §2.1–2.2`: Business Bot API webhook, `A → B → C → E → sotib_oldi`, `channelClicks` vs `realChats`, Last-Touch UTMs | Yes (`users` + `segment_runs` + `segmentEndReasons`) | Updated `set-webhook.ts` deployed, Business DM tests, stage `E` + `bought` integration tests |
 | **M3** | `3-BO‘LIM & 4-BO‘LIM`: Night toggle, `timingMode`, per-message `autoDeleteMinutes` (`≤ 2870m`), 30-day grid + `loopRestart`, `scheduled_broadcasts` | Yes (`message_templates`, `sent_messages`, `bot_texts`, `scheduled_broadcasts`) | Planner/dispatcher tests for 30-day wrap, 48h delete cap, broadcast pacing |
-| **M4** | `2-BO‘LIM §2.3`: Courses, tariffs, study groups, enrollments, installments, AI receipt OCR | Yes (5 new tables) | Deferred until §5.2 client questions are answered |
+| **M4** | `2-BO‘LIM §2.3`: Courses, tariffs, study groups, enrollments, installments, debt/discipline math, AI receipt OCR & `/admin/payments` UI | Yes (`courses`, `tariffs`, `study_groups`, `enrollments`, `enrollment_installments`, `payments`, `payment_receipts`) | `@funnel/shared` contract + math unit tests (`math.test.ts`), API integration tests (enrollments, receipts, OCR confirm, attribution), `/admin/payments` UI typecheck/lint/test |
