@@ -1,5 +1,6 @@
 import { and, count, eq, isNull } from "drizzle-orm";
 import {
+  defaultTimingModeFor,
   type FunnelSegment,
   type FunnelStatus,
   type MessageTemplateInput,
@@ -192,19 +193,24 @@ export const seedTemplates: Record<FunnelSegment, SeedTemplate[]> = {
 };
 
 export function seedInputs(segment: FunnelSegment): MessageTemplateInput[] {
-  return seedTemplates[segment].map((template) => ({
-    segment,
-    day: template.day,
-    text: template.text,
-    media: null,
-    minute: template.minute,
-    buttons: template.buttons,
-    isActive: true,
-    statuses: template.statuses ?? null,
-    kind: template.kind ?? "reminder",
-    atExpiry: false,
-    isPermanent: false,
-  }));
+  return seedTemplates[segment].map((template) => {
+    const kind = template.kind ?? "reminder";
+    return {
+      segment,
+      day: template.day,
+      text: template.text,
+      media: null,
+      minute: template.minute,
+      timingMode: defaultTimingModeFor(segment, template.day, kind),
+      buttons: template.buttons,
+      isActive: true,
+      statuses: template.statuses ?? null,
+      kind,
+      atExpiry: false,
+      isPermanent: false,
+      autoDeleteMinutes: 1440,
+    };
+  });
 }
 
 async function seedSegment(segment: FunnelSegment) {
@@ -218,16 +224,21 @@ async function seedSegment(segment: FunnelSegment) {
     const rows = seedInputs(segment).map((input) => {
       const position = nextPositionByDay.get(input.day) ?? 0;
       nextPositionByDay.set(input.day, position + 1);
+      const autoDeleteMinutes =
+        input.autoDeleteMinutes !== undefined ? input.autoDeleteMinutes : input.isPermanent ? null : 1440;
       return {
         segment,
         day: input.day,
         position,
         text: input.text,
+        timingMode: input.timingMode ?? defaultTimingModeFor(segment, input.day, input.kind),
         timingValue: input.minute,
         buttons: input.buttons,
         isActive: input.isActive,
         statuses: input.statuses,
         kind: input.kind,
+        autoDeleteMinutes,
+        isPermanent: autoDeleteMinutes === null,
       };
     });
     if (rows.length === 0) return 0;

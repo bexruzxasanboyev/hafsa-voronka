@@ -32,6 +32,7 @@ export default function MiniAppRootLayout({ children }: LayoutProps<"/app">) {
   return (
     <html
       lang="uz"
+      suppressHydrationWarning
       className={`${golos.variable} ${scheherazade.variable} h-full antialiased font-sans`}
     >
       <body className="flex min-h-dvh flex-col bg-siyoh text-varaq font-sans">

@@ -20,6 +20,23 @@ export const segmentCapSchema = z.object({
 export type SegmentCap = z.infer<typeof segmentCapSchema>;
 
 export const DEFAULT_SEGMENT_E_CAP = { daily: 2, total: 5 } as const;
+export const DEFAULT_NIGHT_RESTRICTION_ENABLED = false;
+
+export const segmentLoopsSchema = z.object({
+  A: z.boolean(),
+  B: z.boolean(),
+  C: z.boolean(),
+  E: z.boolean(),
+});
+
+export type SegmentLoops = z.infer<typeof segmentLoopsSchema>;
+
+export const DEFAULT_SEGMENT_LOOPS: SegmentLoops = {
+  A: true,
+  B: true,
+  C: true,
+  E: true,
+};
 
 export const messageCapsSchema = z.object({
   A: segmentCapSchema,
@@ -41,6 +58,8 @@ export const adminSettingsSchema = z.object({
   linkTtlHours: z.number().int().min(LINK_TTL_HOURS_MIN).max(LINK_TTL_HOURS_MAX),
   messageCaps: messageCapsSchema,
   chatCleanupHours: chatCleanupHoursSchema,
+  nightRestrictionEnabled: z.boolean().default(DEFAULT_NIGHT_RESTRICTION_ENABLED),
+  segmentLoops: segmentLoopsSchema.default(DEFAULT_SEGMENT_LOOPS),
 });
 
 export const adminSettingsUpdateSchema = adminSettingsSchema

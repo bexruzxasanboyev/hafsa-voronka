@@ -19,9 +19,13 @@ async function main() {
     drop_pending_updates: true,
   });
 
-  await bot.api.setChatMenuButton({
-    menu_button: { type: "web_app", text: "Video", web_app: { url: `${webUrl}/app` } },
-  });
+  if (webUrl.startsWith("https://")) {
+    await bot.api.setChatMenuButton({
+      menu_button: { type: "web_app", text: "Video", web_app: { url: `${webUrl}/app` } },
+    });
+  } else {
+    console.log(`Skipped setChatMenuButton: WEB_URL (${webUrl}) is not https://`);
+  }
 
   const info = await bot.api.getWebhookInfo();
   console.log(`Webhook set: ${info.url} (pending ${info.pending_update_count})`);

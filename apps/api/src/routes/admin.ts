@@ -28,6 +28,7 @@ import {
 import { clientIp } from "@/http/clientIp";
 import { consumeRateLimit } from "@/http/rateLimit";
 import { adminBotTextRoutes } from "@/routes/adminBotTexts";
+import { adminBroadcastRoutes } from "@/routes/adminBroadcasts";
 import { adminLinkRoutes } from "@/routes/adminLinks";
 import { adminVideoRoutes } from "@/routes/adminVideos";
 import { adminMessageRoutes } from "@/routes/adminMessages";
@@ -39,6 +40,7 @@ export const adminRoutes = new Hono();
 adminRoutes.use("*", requireAdminConfig);
 
 adminRoutes.route("/bot-texts", adminBotTextRoutes);
+adminRoutes.route("/broadcasts", adminBroadcastRoutes);
 adminRoutes.route("/links", adminLinkRoutes);
 adminRoutes.route("/videos", adminVideoRoutes);
 adminRoutes.route("/messages", adminMessageRoutes);

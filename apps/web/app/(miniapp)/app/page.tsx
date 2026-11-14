@@ -2,10 +2,10 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { LoadingScreen, useMiniApp } from "@/components/miniapp/MiniAppProvider";
+import { LoadingScreen, MiniAppGate, useMiniApp } from "@/components/miniapp/MiniAppProvider";
 import { BotRegisterScreen } from "@/components/registration/BotRegisterScreen";
 
-export default function AppPage() {
+function AppPageContent() {
   const router = useRouter();
   const { session } = useMiniApp();
 
@@ -15,4 +15,12 @@ export default function AppPage() {
 
   if (session.registered) return <LoadingScreen />;
   return <BotRegisterScreen />;
+}
+
+export default function AppPage() {
+  return (
+    <MiniAppGate>
+      <AppPageContent />
+    </MiniAppGate>
+  );
 }

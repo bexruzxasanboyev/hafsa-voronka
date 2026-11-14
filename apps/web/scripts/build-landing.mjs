@@ -16,8 +16,17 @@ function required(name) {
 const apiUrl = required("NEXT_PUBLIC_API_URL");
 const botUsername = required("NEXT_PUBLIC_BOT_USERNAME");
 const appUrl = process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "") || "http://localhost:3000";
-const pixelId = process.env.NEXT_PUBLIC_FB_PIXEL_ID || "2585302615300650";
-const clarityId = process.env.NEXT_PUBLIC_CLARITY_ID || "z3mqc8x0cm";
+const appHost = (() => {
+  try {
+    return new URL(appUrl).hostname;
+  } catch {
+    return "";
+  }
+})();
+const isLocalTarget =
+  appHost === "localhost" || appHost === "127.0.0.1" || appHost.endsWith(".trycloudflare.com");
+const pixelId = process.env.NEXT_PUBLIC_FB_PIXEL_ID ?? (isLocalTarget ? "" : "2585302615300650");
+const clarityId = process.env.NEXT_PUBLIC_CLARITY_ID ?? (isLocalTarget ? "" : "z3mqc8x0cm");
 
 async function minifyCss(file) {
   const { code } = await transform(await readFile(join(src, "css", file), "utf8"), {

@@ -78,10 +78,11 @@ describe("messageTemplateInputSchema", () => {
     expect(messageTemplateBaseSchema.safeParse({ ...base, segment: "D" }).success).toBe(false);
   });
 
-  it("allows triggers only in A/B on days 2 to 7 and at-expiry only on triggers", () => {
+  it("allows triggers only in A/B on days 2 to 30 and at-expiry only on triggers", () => {
     const trigger = { ...base, day: 2, kind: "trigger" };
     expect(messageTemplateInputSchema.safeParse(trigger).success).toBe(true);
-    expect(messageTemplateInputSchema.safeParse({ ...trigger, segment: "B", day: 7, atExpiry: true }).success).toBe(true);
+    expect(messageTemplateInputSchema.safeParse({ ...trigger, segment: "B", day: 30, atExpiry: true }).success).toBe(true);
+    expect(messageTemplateInputSchema.safeParse({ ...trigger, day: 31 }).success).toBe(false);
     for (const wrong of [{ ...trigger, day: 1 }, { ...trigger, segment: "C" }]) {
       const parsed = messageTemplateInputSchema.safeParse(wrong);
       expect(parsed.success ? null : parsed.error.issues[0]).toMatchObject({ message: "trigger_not_allowed", path: ["kind"] });
@@ -91,5 +92,26 @@ describe("messageTemplateInputSchema", () => {
       message: "at_expiry_trigger_only",
       path: ["atExpiry"],
     });
+  });
+
+  it("validates timingMode and autoDeleteMinutes", () => {
+    expect(messageTemplateInputSchema.safeParse({ ...base, timingMode: "clock" }).success).toBe(true);
+    expect(messageTemplateInputSchema.safeParse({ ...base, timingMode: "relative" }).success).toBe(true);
+    const relativeTrigger = messageTemplateInputSchema.safeParse({
+      ...base,
+      day: 2,
+      kind: "trigger",
+      timingMode: "relative",
+    });
+    expect(relativeTrigger.success ? null : relativeTrigger.error.issues[0]).toMatchObject({
+      message: "trigger_clock_only",
+      path: ["timingMode"],
+    });
+
+    expect(messageTemplateInputSchema.safeParse({ ...base, autoDeleteMinutes: null }).success).toBe(true);
+    expect(messageTemplateInputSchema.safeParse({ ...base, autoDeleteMinutes: 1 }).success).toBe(true);
+    expect(messageTemplateInputSchema.safeParse({ ...base, autoDeleteMinutes: 2870 }).success).toBe(true);
+    expect(messageTemplateInputSchema.safeParse({ ...base, autoDeleteMinutes: 0 }).success).toBe(false);
+    expect(messageTemplateInputSchema.safeParse({ ...base, autoDeleteMinutes: 2871 }).success).toBe(false);
   });
 });

@@ -41,11 +41,18 @@ adminBotTextRoutes.put("/:key", async (c) => {
   const body = botTextUpdateSchema.safeParse(await c.req.json().catch(() => null));
   if (!body.success) return c.json({ error: "invalid_request" }, 400);
 
+  if (
+    botTextDefinitions[key].kind === "button" &&
+    (body.data.autoDeleteMinutes != null || body.data.keepForever === true)
+  ) {
+    return c.json({ error: "invalid_request" }, 400);
+  }
+
   const hasMedia = Boolean((await findBotText(key))?.mediaFileId);
   const error = validateBotText(key, body.data.text, hasMedia);
   if (error) return c.json({ error }, 422);
 
-  await saveBotText(key, body.data.text);
+  await saveBotText(key, body.data);
   return c.json({ items: await listBotTexts() });
 });
 

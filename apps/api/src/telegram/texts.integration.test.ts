@@ -1,8 +1,9 @@
+import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { hashPassword } from "@/admin/auth";
 import { closeDb, db } from "@/db";
 import { runMigrations } from "@/db/migrate";
-import { botTexts } from "@/db/schema";
+import { botTexts, chatMessages } from "@/db/schema";
 import { setTestEnv } from "@/test/env";
 
 const testDbUrl = process.env.TEST_DATABASE_URL;
@@ -55,11 +56,13 @@ describe.skipIf(!testDbUrl)("Editable bot texts", () => {
   beforeEach(async () => {
     calls.length = 0;
     mediaChatMissing = false;
+    await db().delete(chatMessages);
     await db().delete(botTexts);
     texts.invalidateBotTexts();
   });
 
   afterAll(async () => {
+    await db().delete(chatMessages);
     await db().delete(botTexts);
     await closeDb();
   });
@@ -67,8 +70,12 @@ describe.skipIf(!testDbUrl)("Editable bot texts", () => {
   const request = (path: string, init: RequestInit = {}) =>
     app.request(`/admin/bot-texts${path}`, { ...init, headers: { cookie, ...init.headers } });
 
-  const putText = (key: string, text: string) =>
-    request(`/${key}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ text }) });
+  const putText = (key: string, body: string | { text: string; autoDeleteMinutes?: number | null; keepForever?: boolean }) =>
+    request(`/${key}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(typeof body === "string" ? { text: body } : body),
+    });
 
   const upload = (key: string, file: File) => {
     const form = new FormData();
@@ -88,7 +95,14 @@ describe.skipIf(!testDbUrl)("Editable bot texts", () => {
     expect(body.mediaEnabled).toBe(true);
     expect(body.items).toHaveLength(27);
     const welcome = body.items.find((item: { key: string }) => item.key === "welcome");
-    expect(welcome).toMatchObject({ kind: "message", placeholders: ["name"], text: null, media: null });
+    expect(welcome).toMatchObject({
+      kind: "message",
+      placeholders: ["name"],
+      text: null,
+      media: null,
+      autoDeleteMinutes: null,
+      keepForever: false,
+    });
     expect(welcome.defaultText).toContain("{name}");
   });
 
@@ -206,5 +220,73 @@ describe.skipIf(!testDbUrl)("Editable bot texts", () => {
 
     await request("/welcome", { method: "DELETE" });
     expect(await texts.botText("welcome", { name: "Ali" })).toBe(texts.defaultBotTexts.welcome.replace("{name}", "Ali"));
+  });
+
+  it("saves autoDeleteMinutes and keepForever, rejects them on buttons, and resets default rows", async () => {
+    const rejectBtnTimer = await putText("watchButton", { text: "Boshlash", autoDeleteMinutes: 60 });
+    expect(rejectBtnTimer.status).toBe(400);
+    const rejectBtnForever = await putText("watchButton", { text: "Boshlash", keepForever: true });
+    expect(rejectBtnForever.status).toBe(400);
+
+    const savedTimer = await putText("welcome", {
+      text: texts.defaultBotTexts.welcome,
+      autoDeleteMinutes: 90,
+      keepForever: false,
+    });
+    expect(savedTimer.status).toBe(200);
+    const timerItems = (await savedTimer.json()).items as { key: string; text: string | null; autoDeleteMinutes: number | null; keepForever: boolean }[];
+    expect(timerItems.find((i) => i.key === "welcome")).toMatchObject({
+      text: null,
+      autoDeleteMinutes: 90,
+      keepForever: false,
+    });
+
+    const savedForever = await putText("fallback", {
+      text: "Saqlangan matn",
+      autoDeleteMinutes: null,
+      keepForever: true,
+    });
+    expect(savedForever.status).toBe(200);
+    const foreverItems = (await savedForever.json()).items as { key: string; text: string | null; autoDeleteMinutes: number | null; keepForever: boolean }[];
+    expect(foreverItems.find((i) => i.key === "fallback")).toMatchObject({
+      text: "Saqlangan matn",
+      autoDeleteMinutes: null,
+      keepForever: true,
+    });
+
+    const resetDefault = await putText("welcome", {
+      text: texts.defaultBotTexts.welcome,
+      autoDeleteMinutes: null,
+      keepForever: false,
+    });
+    expect(resetDefault.status).toBe(200);
+    expect(await db().select().from(botTexts).where(eq(botTexts.key, "welcome"))).toHaveLength(0);
+  });
+
+  it("records chat_messages deleteAt and keepForever when sendBotText returns a numeric message_id", async () => {
+    let seq = 800;
+    const { Bot } = await import("grammy");
+    const mockBot = new Bot("123456:TEST-mock");
+    mockBot.api.config.use(async (_prev, method) => {
+      if (method.startsWith("send")) return { ok: true, result: { message_id: ++seq } } as never;
+      return { ok: true, result: true } as never;
+    });
+
+    await putText("welcome", { text: "Salom {name}", autoDeleteMinutes: 30, keepForever: false });
+    await putText("fallback", { text: "Saqlansin", autoDeleteMinutes: null, keepForever: true });
+
+    await texts.sendBotText(mockBot.api, 991, "welcome", { name: "Aziza" });
+    await texts.sendBotText(mockBot.api, 991, "fallback");
+    await texts.sendBotText(mockBot.api, 991, "welcome", { name: "Skip" }, undefined, { trackChat: false });
+
+    const rows = await db().select().from(chatMessages).where(eq(chatMessages.chatId, 991));
+    expect(rows).toHaveLength(2);
+    const first = rows.find((r) => r.messageId === 801)!;
+    const second = rows.find((r) => r.messageId === 802)!;
+    expect(first.keepForever).toBe(false);
+    expect(first.deleteAt).not.toBeNull();
+    expect(Math.round((first.deleteAt!.getTime() - first.sentAt.getTime()) / 60_000)).toBe(30);
+    expect(second.keepForever).toBe(true);
+    expect(second.deleteAt).toBeNull();
   });
 });

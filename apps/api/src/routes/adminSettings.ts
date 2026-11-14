@@ -1,16 +1,17 @@
 import { Hono } from "hono";
 import { desc, eq } from "drizzle-orm";
 import {
+  type AdminSettingsUpdate,
   adminSettingsUpdateSchema,
   businessConnectionApprovalSchema,
-  type AdminSettings,
   type BusinessConnectionItem,
 } from "@funnel/shared";
 import { requireAdminAuth } from "@/admin/auth";
 import { db } from "@/db";
-import { businessConnections, settings, type BusinessConnectionRow } from "@/db/schema";
+import { businessConnections, type BusinessConnectionRow } from "@/db/schema";
 import { env } from "@/env";
-import { chatCleanupHours, invalidateSettings, linkTtlHours, messageCaps } from "@/settings/service";
+import { kickMessageDispatcher } from "@/messages/dispatch";
+import { getAdminSettings, updateAdminSettings } from "@/settings/service";
 
 export const adminSettingsRoutes = new Hono();
 
@@ -31,38 +32,38 @@ function formatBusinessConnection(row: BusinessConnectionRow): BusinessConnectio
   };
 }
 
-async function currentSettings(): Promise<AdminSettings> {
-  return {
-    linkTtlHours: await linkTtlHours(),
-    messageCaps: await messageCaps(),
-    chatCleanupHours: await chatCleanupHours(),
-  };
-}
-
 adminSettingsRoutes.get("/", async (c) => {
-  return c.json(await currentSettings());
+  return c.json(await getAdminSettings());
 });
 
 adminSettingsRoutes.put("/", async (c) => {
-  const body = adminSettingsUpdateSchema.safeParse(await c.req.json().catch(() => null));
-  if (!body.success) return c.json({ error: "invalid_request" }, 400);
+  const raw: unknown = await c.req.json().catch(() => null);
+  const body = adminSettingsUpdateSchema.safeParse(raw);
+  if (!body.success || typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return c.json({ error: "invalid_request" }, 400);
+  }
 
-  const values = [
-    ...(body.data.linkTtlHours === undefined ? [] : [{ key: "LINK_TTL_HOURS", value: String(body.data.linkTtlHours) }]),
-    ...(body.data.messageCaps === undefined ? [] : [{ key: "MESSAGE_CAPS", value: JSON.stringify(body.data.messageCaps) }]),
-    ...(body.data.chatCleanupHours === undefined ? [] : [{ key: "CHAT_CLEANUP_HOURS", value: String(body.data.chatCleanupHours) }]),
-  ];
-  await db().transaction(async (tx) => {
-    for (const row of values) {
-      await tx
-        .insert(settings)
-        .values(row)
-        .onConflictDoUpdate({ target: settings.key, set: { value: row.value, updatedAt: new Date() } });
-    }
-  });
-  invalidateSettings();
+  const update: AdminSettingsUpdate = {
+    ...(Object.hasOwn(raw, "linkTtlHours") ? { linkTtlHours: body.data.linkTtlHours } : {}),
+    ...(Object.hasOwn(raw, "messageCaps") ? { messageCaps: body.data.messageCaps } : {}),
+    ...(Object.hasOwn(raw, "chatCleanupHours") ? { chatCleanupHours: body.data.chatCleanupHours } : {}),
+    ...(Object.hasOwn(raw, "nightRestrictionEnabled")
+      ? { nightRestrictionEnabled: body.data.nightRestrictionEnabled }
+      : {}),
+    ...(Object.hasOwn(raw, "segmentLoops") ? { segmentLoops: body.data.segmentLoops } : {}),
+  };
+  if (Object.values(update).every((value) => value === undefined)) {
+    return c.json({ error: "invalid_request" }, 400);
+  }
 
-  return c.json(await currentSettings());
+  const before = await getAdminSettings();
+  const updated = await updateAdminSettings(update);
+  const scheduleChanged =
+    before.nightRestrictionEnabled !== updated.nightRestrictionEnabled ||
+    (["A", "B", "C", "E"] as const).some((segment) => before.segmentLoops[segment] !== updated.segmentLoops[segment]);
+  if (scheduleChanged) kickMessageDispatcher();
+
+  return c.json(updated);
 });
 
 adminSettingsRoutes.get("/business-connections", async (c) => {

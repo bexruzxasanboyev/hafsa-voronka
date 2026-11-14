@@ -1,5 +1,5 @@
 import { and, eq, sql } from "drizzle-orm";
-import { type FunnelStatus, type LinkGrantKind, linkBoundSegments } from "@funnel/shared";
+import { type FunnelStatus, type LinkGrantKind, linkBoundSegments, TEMPLATE_DAYS } from "@funnel/shared";
 import { db } from "@/db";
 import { type LinkGrant, linkGrants, type User, users, videos, watchProgress } from "@/db/schema";
 import { syncSegment } from "@/funnel/segments";
@@ -56,7 +56,9 @@ export async function currentFunnelDay(
 ): Promise<number> {
   if (user.linkId === null) return 1;
   const [grant] = await executor.select({ day: linkGrants.day }).from(linkGrants).where(eq(linkGrants.id, user.linkId));
-  return grant ? funnelDayAt({ day: grant.day, expiresAt: user.linkExpiresAt }, now) : 1;
+  if (!grant) return 1;
+  const raw = funnelDayAt({ day: grant.day, expiresAt: user.linkExpiresAt }, now);
+  return raw > TEMPLATE_DAYS ? ((raw - 1) % TEMPLATE_DAYS) + 1 : raw;
 }
 
 export type LessonState = { status: FunnelStatus | null; closed: boolean };

@@ -3,6 +3,8 @@
 import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 import {
+  autoDeleteMinutesSchema,
+  defaultTimingModeFor,
   type FunnelSegment,
   type FunnelStatus,
   type MessageTemplate,
@@ -11,12 +13,14 @@ import {
   templateTextLimit,
   type TemplateButton,
   type TemplateKind,
+  type TemplateTimingMode,
   validateTemplateText,
   validateTiming,
   visibleLength,
   sanitizeTelegramHtml,
   statusTargetSegments,
 } from "@funnel/shared";
+import { AutoDeletePicker } from "@/components/admin/AutoDeletePicker";
 import { Button } from "@/components/admin/ui/Button";
 import { ConfirmDialog, Dialog, Sheet } from "@/components/admin/ui/Dialog";
 import { Field } from "@/components/admin/ui/Field";
@@ -39,7 +43,7 @@ import {
   updateMessage,
   uploadMessageMedia,
 } from "@/lib/admin/messages";
-import { PhotoIcon, PinIcon, PlusIcon, VideoIcon, VoiceIcon } from "@/components/icons";
+import { PhotoIcon, PlusIcon, VideoIcon, VoiceIcon } from "@/components/icons";
 import { defaultMinuteFor, timingSummary } from "@/lib/admin/messageTiming";
 import { adminUz } from "@/lib/i18n/admin";
 
@@ -47,6 +51,7 @@ const copy = adminUz.messages.editor;
 const errors = adminUz.messages.errors;
 const mediaIcons = { photo: PhotoIcon, video: VideoIcon, voice: VoiceIcon };
 const acceptedMedia = Object.values(TEMPLATE_MEDIA_MIME_TYPES).flat().join(",");
+const DEFAULT_AUTO_DELETE_MINUTES = 1440;
 const extraErrorCodes = new Set([
   "statuses_invalid",
   "unsupported_type",
@@ -94,6 +99,7 @@ export type MessagePreset = {
   minute: number;
   kind: TemplateKind;
   atExpiry: boolean;
+  timingMode?: TemplateTimingMode;
   text?: string;
   statuses?: FunnelStatus[] | null;
   buttons?: TemplateButton[];
@@ -124,37 +130,44 @@ export function MessageEditor({
   onDeleted,
   onClose,
 }: MessageEditorProps) {
-  const [draft, setDraft] = useState<MessageTemplateInput>(() =>
-    item
-      ? {
-          segment: item.segment,
-          day: item.day,
-          text: item.text,
-          media: item.media,
-          minute: item.minute,
-          buttons: item.buttons,
-          isActive: item.isActive,
-          statuses: item.statuses,
-          kind: item.kind,
-          atExpiry: item.atExpiry,
-          isPermanent: item.isPermanent,
-        }
-      : {
-          segment,
-          day: preset?.day ?? 1,
-          text: preset?.text ?? "",
-          media: null,
-          minute:
-            preset?.minute ??
-            defaultMinuteFor({ segment, day: preset?.day ?? 1, kind: preset?.kind ?? "reminder", atExpiry: preset?.atExpiry ?? false }),
-          buttons: preset?.buttons ?? [],
-          isActive: true,
-          statuses: preset?.statuses ?? null,
-          kind: preset?.kind ?? "reminder",
-          atExpiry: preset?.atExpiry ?? false,
-          isPermanent: false,
-        },
-  );
+  const [draft, setDraft] = useState<MessageTemplateInput>(() => {
+    if (item) {
+      return {
+        segment: item.segment,
+        day: item.day,
+        text: item.text,
+        media: item.media,
+        minute: item.minute,
+        timingMode: item.timingMode,
+        buttons: item.buttons,
+        isActive: item.isActive,
+        statuses: item.statuses,
+        kind: item.kind,
+        atExpiry: item.atExpiry,
+        isPermanent: item.autoDeleteMinutes === null,
+        autoDeleteMinutes: item.autoDeleteMinutes,
+      };
+    }
+    const day = preset?.day ?? 1;
+    const kind = preset?.kind ?? "reminder";
+    const atExpiry = preset?.atExpiry ?? false;
+    const timingMode = preset?.timingMode ?? defaultTimingModeFor(segment, day, kind);
+    return {
+      segment,
+      day,
+      text: preset?.text ?? "",
+      media: null,
+      minute: preset?.minute ?? defaultMinuteFor({ segment, day, kind, atExpiry, timingMode }),
+      timingMode,
+      buttons: preset?.buttons ?? [],
+      isActive: true,
+      statuses: preset?.statuses ?? null,
+      kind,
+      atExpiry,
+      isPermanent: false,
+      autoDeleteMinutes: DEFAULT_AUTO_DELETE_MINUTES,
+    };
+  });
   const [busy, setBusy] = useState<"save" | "upload" | "delete" | "test" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [testNote, setTestNote] = useState<string | null>(null);
@@ -178,9 +191,11 @@ export function MessageEditor({
   const sanitized = sanitizeTelegramHtml(draft.text);
   const textError = validateTemplateText(draft.text, hasMedia);
   const timingError = validateTiming(draft.day, draft.minute);
+  const autoDeleteValue = draft.autoDeleteMinutes !== undefined ? draft.autoDeleteMinutes : draft.isPermanent ? null : DEFAULT_AUTO_DELETE_MINUTES;
+  const autoDeleteValid = autoDeleteMinutesSchema.safeParse(autoDeleteValue).success;
   const length = sanitized.ok ? visibleLength(sanitized.html) : draft.text.length;
   const limit = templateTextLimit(hasMedia);
-  const valid = textError === null && timingError === null;
+  const valid = textError === null && timingError === null && autoDeleteValid;
   const buttonsValid = draft.buttons.every((button) => button.text.trim() && (button.kind !== "link" || button.url.startsWith("https://")));
 
   function patch(values: Partial<MessageTemplateInput>) {
@@ -310,14 +325,10 @@ export function MessageEditor({
                 <TimingPicker subject={draft} minute={draft.minute} onChange={patch} error={timingError} />
               </Disclosure>
 
-              <div className="flex items-center gap-3 rounded-[12px] border border-chiziq py-2 pl-3 pr-2">
-                <PinIcon className="h-5 w-5 text-qalam" />
-                <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                  <span className="text-[15px] font-semibold text-siyoh">{copy.permanent}</span>
-                  <span className="text-[13px] text-qalam/70">{copy.permanentHint}</span>
-                </span>
-                <Switch checked={draft.isPermanent} onChange={(isPermanent) => patch({ isPermanent })} label={copy.permanent} />
-              </div>
+              <AutoDeletePicker
+                value={autoDeleteValue}
+                onChange={(minutes) => patch({ autoDeleteMinutes: minutes, isPermanent: minutes === null })}
+              />
 
               <input
                 ref={fileInput}

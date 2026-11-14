@@ -18,6 +18,9 @@ import {
 import { sql } from "drizzle-orm";
 import {
   appointmentPurposes,
+  type BroadcastAudience,
+  broadcastStatuses,
+  type BroadcastButton,
   driveImportErrors,
   driveImportStatuses,
   eventTypes,
@@ -33,6 +36,7 @@ import {
   type TemplateButton,
   templateKinds,
   templateMediaTypes,
+  templateTimingModes,
   type Utm,
 } from "@funnel/shared";
 
@@ -289,13 +293,24 @@ export const rateLimits = pgTable("rate_limits", {
   windowStart: timestamp("window_start", { withTimezone: true }).notNull(),
 });
 
-export const botTexts = pgTable("bot_texts", {
-  key: text("key").primaryKey(),
-  text: text("text"),
-  mediaType: text("media_type"),
-  mediaFileId: text("media_file_id"),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
-});
+export const botTexts = pgTable(
+  "bot_texts",
+  {
+    key: text("key").primaryKey(),
+    text: text("text"),
+    mediaType: text("media_type"),
+    mediaFileId: text("media_file_id"),
+    autoDeleteMinutes: integer("auto_delete_minutes"),
+    keepForever: boolean("keep_forever").default(false).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    check(
+      "bot_texts_auto_delete_range",
+      sql`${t.autoDeleteMinutes} is null or (${t.autoDeleteMinutes} between 1 and 2870)`,
+    ),
+  ],
+);
 
 export type BotTextRow = typeof botTexts.$inferSelect;
 
@@ -399,12 +414,14 @@ export const messageTemplates = pgTable(
     text: text("text").notNull(),
     mediaType: text("media_type", { enum: templateMediaTypes }),
     mediaFileId: text("media_file_id"),
+    timingMode: text("timing_mode", { enum: templateTimingModes }).default("relative").notNull(),
     timingValue: integer("timing_value").notNull(),
     buttons: jsonb("buttons").$type<TemplateButton[]>().default([]).notNull(),
     statuses: text("statuses").array().$type<FunnelStatus[]>(),
     kind: text("kind", { enum: templateKinds }).default("reminder").notNull(),
     atExpiry: boolean("at_expiry").default(false).notNull(),
     isPermanent: boolean("is_permanent").default(false).notNull(),
+    autoDeleteMinutes: integer("auto_delete_minutes"),
     isActive: boolean("is_active").default(true).notNull(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -414,15 +431,20 @@ export const messageTemplates = pgTable(
     index("message_templates_day_idx")
       .on(t.segment, t.day, t.position)
       .where(sql`${t.deletedAt} is null`),
-    check("message_templates_day_range", sql`${t.day} between 1 and 7`),
+    check("message_templates_day_range", sql`${t.day} between 1 and 30`),
     check("message_templates_segment_values", sql`${t.segment} in ('A', 'B', 'C', 'E') or ${t.deletedAt} is not null`),
     check("message_templates_timing_value_range", sql`${t.timingValue} between 0 and 1439`),
+    check("message_templates_timing_mode_values", sql`${t.timingMode} in ('relative', 'clock')`),
+    check(
+      "message_templates_auto_delete_range",
+      sql`${t.autoDeleteMinutes} is null or (${t.autoDeleteMinutes} between 1 and 2870)`,
+    ),
     uniqueIndex("message_templates_one_trigger_idx")
       .on(t.segment, t.day)
       .where(sql`${t.kind} = 'trigger' and ${t.isActive} and ${t.deletedAt} is null`),
     check(
       "message_templates_kind_shape",
-      sql`(${t.kind} = 'reminder' and not ${t.atExpiry}) or (${t.kind} = 'trigger' and ${t.segment} in ('A', 'B') and ${t.day} between 2 and 7)`,
+      sql`(${t.kind} = 'reminder' and not ${t.atExpiry}) or (${t.kind} = 'trigger' and ${t.segment} in ('A', 'B') and ${t.day} between 2 and 30)`,
     ),
     check(
       "message_templates_statuses_values",
@@ -456,6 +478,7 @@ export const sentMessages = pgTable(
     telegramMessageId: bigint("telegram_message_id", { mode: "number" }),
     sentAt: timestamp("sent_at", { withTimezone: true }),
     sendError: text("send_error"),
+    deleteAt: timestamp("delete_at", { withTimezone: true }),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     deleteError: text("delete_error"),
     clickedAt: timestamp("clicked_at", { withTimezone: true }),
@@ -467,6 +490,11 @@ export const sentMessages = pgTable(
     index("sent_messages_undeleted_idx")
       .on(t.sentAt)
       .where(sql`${t.sentAt} is not null and ${t.deletedAt} is null and ${t.deleteError} is null`),
+    index("sent_messages_delete_due_idx")
+      .on(t.deleteAt)
+      .where(
+        sql`${t.sentAt} is not null and ${t.deletedAt} is null and ${t.deleteError} is null and ${t.deleteAt} is not null`,
+      ),
     index("sent_messages_template_idx").on(t.templateId),
     index("sent_messages_link_idx").on(t.linkId),
     check("sent_messages_source", sql`(${t.templateId} is null) <> (${t.botTextKey} is null)`),
@@ -483,6 +511,8 @@ export const chatMessages = pgTable(
     messageId: bigint("message_id", { mode: "number" }).notNull(),
     fromBot: boolean("from_bot").notNull(),
     sentAt: timestamp("sent_at", { withTimezone: true }).notNull(),
+    deleteAt: timestamp("delete_at", { withTimezone: true }),
+    keepForever: boolean("keep_forever").default(false).notNull(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     deleteError: text("delete_error"),
   },
@@ -491,6 +521,9 @@ export const chatMessages = pgTable(
     index("chat_messages_undeleted_idx")
       .on(t.sentAt)
       .where(sql`${t.deletedAt} is null and ${t.deleteError} is null`),
+    index("chat_messages_delete_due_idx")
+      .on(t.deleteAt)
+      .where(sql`${t.deletedAt} is null and ${t.deleteError} is null and ${t.deleteAt} is not null`),
   ],
 );
 
@@ -621,3 +654,86 @@ export const videoRolloutRecipients = pgTable(
 );
 
 export type VideoRolloutRecipient = typeof videoRolloutRecipients.$inferSelect;
+
+export const broadcastRecipientStates = ["pending", "sent", "blocked", "failed"] as const;
+export type BroadcastRecipientState = (typeof broadcastRecipientStates)[number];
+
+export const scheduledBroadcasts = pgTable(
+  "scheduled_broadcasts",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    text: text("text").notNull(),
+    mediaType: text("media_type", { enum: templateMediaTypes }),
+    mediaFileId: text("media_file_id"),
+    buttons: jsonb("buttons").$type<BroadcastButton[]>().default([]).notNull(),
+    audiences: text("audiences").array().$type<BroadcastAudience[]>().notNull(),
+    scheduledAt: timestamp("scheduled_at", { withTimezone: true }).notNull(),
+    autoDeleteMinutes: integer("auto_delete_minutes"),
+    status: text("status", { enum: broadcastStatuses }).default("scheduled").notNull(),
+    targetCount: integer("target_count"),
+    sentCount: integer("sent_count").default(0).notNull(),
+    blockedCount: integer("blocked_count").default(0).notNull(),
+    failedCount: integer("failed_count").default(0).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("scheduled_broadcasts_status_scheduled_idx").on(t.status, t.scheduledAt),
+    check("scheduled_broadcasts_status_values", sql`${t.status} in ('scheduled', 'running', 'done', 'cancelled')`),
+    check("scheduled_broadcasts_media_pair", sql`(${t.mediaType} is null) = (${t.mediaFileId} is null)`),
+    check(
+      "scheduled_broadcasts_media_type_values",
+      sql`${t.mediaType} is null or ${t.mediaType} in ('photo', 'video', 'voice')`,
+    ),
+    check(
+      "scheduled_broadcasts_auto_delete_range",
+      sql`${t.autoDeleteMinutes} is null or (${t.autoDeleteMinutes} between 1 and 2870)`,
+    ),
+    check(
+      "scheduled_broadcasts_audiences_values",
+      sql`cardinality(${t.audiences}) > 0 and ${t.audiences} <@ array['all', 'A', 'B', 'C', 'E', 'bought', 'not_bought']::text[]`,
+    ),
+  ],
+);
+
+export type ScheduledBroadcastRow = typeof scheduledBroadcasts.$inferSelect;
+
+export const scheduledBroadcastRecipients = pgTable(
+  "scheduled_broadcast_recipients",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    broadcastId: bigint("broadcast_id", { mode: "number" })
+      .notNull()
+      .references(() => scheduledBroadcasts.id, { onDelete: "cascade" }),
+    userId: bigint("user_id", { mode: "number" })
+      .notNull()
+      .references(() => users.id),
+    state: text("state", { enum: broadcastRecipientStates }).default("pending").notNull(),
+    clickToken: uuid("click_token").defaultRandom().notNull().unique(),
+    linkTargets: jsonb("link_targets").$type<SentLinkTarget[]>().default([]).notNull(),
+    telegramMessageId: bigint("telegram_message_id", { mode: "number" }),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    sendError: text("send_error"),
+    deleteAt: timestamp("delete_at", { withTimezone: true }),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    deleteError: text("delete_error"),
+    clickedAt: timestamp("clicked_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("scheduled_broadcast_recipients_uidx").on(t.broadcastId, t.userId),
+    index("scheduled_broadcast_recipients_open_idx").on(t.broadcastId, t.state, t.id),
+    index("scheduled_broadcast_recipients_delete_due_idx")
+      .on(t.deleteAt)
+      .where(
+        sql`${t.sentAt} is not null and ${t.deletedAt} is null and ${t.deleteError} is null and ${t.deleteAt} is not null`,
+      ),
+    check(
+      "scheduled_broadcast_recipients_state_values",
+      sql`${t.state} in ('pending', 'sent', 'blocked', 'failed')`,
+    ),
+  ],
+);
+
+export type ScheduledBroadcastRecipientRow = typeof scheduledBroadcastRecipients.$inferSelect;

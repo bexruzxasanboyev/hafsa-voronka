@@ -1,5 +1,6 @@
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import {
+  defaultTimingModeFor,
   type FunnelSegment,
   type MessageTemplate,
   type MessageTemplateInput,
@@ -52,28 +53,35 @@ export function toTemplate(row: MessageTemplateRow): MessageTemplate {
     text: row.text,
     media: row.mediaType && row.mediaFileId ? { type: row.mediaType, fileId: row.mediaFileId } : null,
     minute: row.timingValue,
+    timingMode: row.timingMode,
     buttons: row.buttons,
     isActive: row.isActive,
     statuses: row.statuses,
     kind: row.kind,
     atExpiry: row.atExpiry,
-    isPermanent: row.isPermanent,
+    isPermanent: row.autoDeleteMinutes === null,
+    autoDeleteMinutes: row.autoDeleteMinutes,
     updatedAt: row.updatedAt.toISOString(),
   };
 }
 
 function columns(input: MessageTemplateInput) {
+  const timingMode = input.timingMode ?? defaultTimingModeFor(input.segment, input.day, input.kind);
+  const autoDeleteMinutes =
+    input.autoDeleteMinutes !== undefined ? input.autoDeleteMinutes : input.isPermanent ? null : 1440;
   return {
     text: input.text,
     mediaType: input.media?.type ?? null,
     mediaFileId: input.media?.fileId ?? null,
+    timingMode,
     timingValue: input.minute,
     buttons: input.buttons,
     isActive: input.isActive,
     statuses: normalizeStatuses(input.segment, input.statuses),
     kind: input.kind,
     atExpiry: input.kind === "trigger" && input.atExpiry,
-    isPermanent: input.isPermanent,
+    autoDeleteMinutes,
+    isPermanent: autoDeleteMinutes === null,
   };
 }
 

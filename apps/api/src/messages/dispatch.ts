@@ -1,10 +1,11 @@
-import { and, asc, eq, gt, inArray, isNotNull, isNull, lt, lte, ne, or, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNotNull, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { type Api, GrammyError, HttpError, InlineKeyboard } from "grammy";
 import type { Message } from "grammy/types";
 import {
   type BotButtonKey,
   type BotMessageKey,
   type FunnelSegment,
+  funnelSegments,
   type FunnelStatus,
   isInRolloutWindow,
   linkBoundSegments,
@@ -25,18 +26,19 @@ import {
   watchAppointments,
   watchProgress,
 } from "@/db/schema";
+import { processBroadcasts } from "@/broadcasts/run";
 import { env } from "@/env";
 import { syncSegment } from "@/funnel/segments";
 import { NO_VIDEO_MARKS, statusFor } from "@/funnel/status";
 import { logEvent } from "@/funnel/users";
 import { refreshUserLeadCards } from "@/leads/service";
 import { type LessonState, lessonState, reopenWithin } from "@/links/service";
-import { linkTtlHours, messageCaps } from "@/settings/service";
+import { linkTtlHours, messageCaps, nightRestrictionEnabled, segmentLoops } from "@/settings/service";
 import { isAdminTelegramId, notAdminTelegramId } from "@/telegram/admins";
 import { bot } from "@/telegram/bot";
 import { isBlockedError, markBlocked } from "@/telegram/blocked";
 import { cleanupChatMessages } from "@/telegram/chatLog";
-import { botText, sendBotText } from "@/telegram/texts";
+import { botText, findBotText, sendBotText } from "@/telegram/texts";
 import { watchAppUrl } from "@/telegram/watchUrl";
 import { uz } from "@/i18n/uz";
 import {
@@ -54,13 +56,15 @@ import {
 } from "@/videos/rollout/run";
 import { templateContextFor } from "./context";
 import { renderTemplate, type ButtonWrap } from "./render";
-import { activeTemplateRows, toTemplate } from "./repo";
+import { toTemplate } from "./repo";
 import {
   CHAIN_MS,
+  cycleForRun,
   DAY_MS,
   isChattingWithAdminNow,
+  isNightAt,
   isWatchingNow,
-  nextPendingDue,
+  MINUTE_MS,
   pickNext,
   type PlanItem,
   planChain,
@@ -75,8 +79,6 @@ const DISPATCH_INTERVAL_MS = 60_000;
 const MAX_USERS_PER_TICK = 1000;
 const API_GAP_MS = 35;
 const HOUR_MS = 3_600_000;
-const SWEEP_AGE_MS = 47 * HOUR_MS;
-const SWEEP_HARD_MS = 47 * HOUR_MS + 50 * 60_000;
 const DELETE_LIMIT_MS = 48 * HOUR_MS;
 const INTERRUPTED_MS = 10 * 60_000;
 const SWEEP_BATCH_SIZE = 500;
@@ -105,6 +107,8 @@ type Candidate = {
   usage: SendUsage;
   status: FunnelStatus | null;
   watch: WatchSnapshot;
+  loop: boolean;
+  nightRestriction: boolean;
 };
 
 type Pick = { candidate: Candidate; item: PlanItem<MessageTemplateRow> };
@@ -139,13 +143,21 @@ export function trackedWrap(
   };
 }
 
-const replaceable = sql`not exists (select 1 from ${messageTemplates} where ${messageTemplates.id} = ${sentMessages.templateId} and ${messageTemplates.isPermanent})`;
-
 const chainAllowed = sql`not exists (select 1 from ${linkGrants} where ${linkGrants.id} = ${users.linkId} and ${linkGrants.silent})`;
 
 async function loadCandidates(now: Date, userId?: number): Promise<Candidate[]> {
   const dayStart = tashkentDayStart(now).toISOString();
   const since = new Date(now.getTime() - CHAIN_MS - DAY_MS);
+  const loops = await segmentLoops();
+  const nightRestriction = await nightRestrictionEnabled();
+  const loopingSegments = funnelSegments.filter((segment) => loops[segment]);
+  const windowCondition =
+    loopingSegments.length === funnelSegments.length
+      ? undefined
+      : loopingSegments.length === 0
+        ? gt(segmentRuns.enteredAt, since)
+        : or(inArray(segmentRuns.segment, loopingSegments), gt(segmentRuns.enteredAt, since));
+
   const rows = await db()
     .select({
       runId: segmentRuns.id,
@@ -169,16 +181,12 @@ async function loadCandidates(now: Date, userId?: number): Promise<Candidate[]> 
       introEndSec: videos.introEndSec,
       courseStartSec: videos.courseStartSec,
       priceSec: videos.priceSec,
-      sentTemplateIds: sql<string[]>`coalesce(array_agg(${sentMessages.templateId}) filter (where ${sentMessages.templateId} is not null), '{}')::bigint[]`,
       sentToday: sql<number>`(select count(*) from sent_messages c where c.user_id = ${segmentRuns.userId} and c.template_id is not null and c.sent_at >= ${dayStart}::timestamptz)::int`,
-      runToday: sql<number>`(count(*) filter (where ${sentMessages.templateId} is not null and ${sentMessages.sentAt} >= ${dayStart}::timestamptz))::int`,
-      runTotal: sql<number>`(count(${sentMessages.sentAt}) filter (where ${sentMessages.templateId} is not null))::int`,
     })
     .from(segmentRuns)
     .innerJoin(users, eq(users.id, segmentRuns.userId))
     .leftJoin(watchProgress, eq(watchProgress.userId, users.id))
     .leftJoin(videos, eq(videos.id, users.videoId))
-    .leftJoin(sentMessages, eq(sentMessages.segmentRunId, segmentRuns.id))
     .where(
       and(
         isNull(segmentRuns.endedAt),
@@ -187,37 +195,81 @@ async function loadCandidates(now: Date, userId?: number): Promise<Candidate[]> 
         or(eq(segmentRuns.segment, "E"), isNull(users.wroteAdminAt)),
         notAdminTelegramId(users.telegramId),
         chainAllowed,
-        gt(segmentRuns.enteredAt, since),
+        windowCondition,
         userId === undefined ? undefined : eq(segmentRuns.userId, userId),
       ),
-    )
-    .groupBy(segmentRuns.id, users.id, watchProgress.userId, videos.id);
-  return rows.map((row) => ({
-    runId: row.runId,
-    userId: row.userId,
-    segment: row.segment,
-    enteredAt: row.enteredAt,
-    telegramId: row.telegramId,
-    linkId: row.linkId,
-    linkExpiresAt: row.linkExpiresAt,
-    linkDay: row.linkDay === null ? null : Number(row.linkDay),
-    lastAdminChatAt: row.lastAdminChatAt,
-    sentTemplateIds: row.sentTemplateIds.map(Number),
-    usage: { today: row.sentToday, runToday: row.runToday, runTotal: row.runTotal },
-    status: statusFor(
-      row.maxPosition === null ? undefined : { maxPosition: row.maxPosition, startedAt: row.startedAt },
-      row.duration === null
-        ? NO_VIDEO_MARKS
-        : {
-            duration: row.duration,
-            introEndSec: row.introEndSec,
-            courseStartSec: row.courseStartSec,
-            priceSec: row.priceSec,
-          },
-      row,
-    ),
-    watch: { lastBeatAt: row.lastBeatAt, playing: row.playing ?? false },
-  }));
+    );
+  if (rows.length === 0) return [];
+
+  const runIds = rows.map((row) => row.runId);
+  const sentStats = await db()
+    .select({
+      segmentRunId: sentMessages.segmentRunId,
+      slot: sentMessages.slot,
+      templateIds: sql<string[]>`coalesce(array_agg(${sentMessages.templateId}), '{}')::bigint[]`,
+      total: sql<number>`count(${sentMessages.sentAt})::int`,
+      today: sql<number>`(count(*) filter (where ${sentMessages.sentAt} >= ${dayStart}::timestamptz))::int`,
+    })
+    .from(sentMessages)
+    .where(and(inArray(sentMessages.segmentRunId, runIds), isNotNull(sentMessages.templateId)))
+    .groupBy(sentMessages.segmentRunId, sentMessages.slot);
+
+  const statsByRunSlot = new Map<string, { templateIds: number[]; total: number }>();
+  const todayByRun = new Map<number, number>();
+  for (const stat of sentStats) {
+    statsByRunSlot.set(`${stat.segmentRunId}:${stat.slot}`, {
+      templateIds: stat.templateIds.map(Number),
+      total: stat.total,
+    });
+    todayByRun.set(stat.segmentRunId, (todayByRun.get(stat.segmentRunId) ?? 0) + stat.today);
+  }
+
+  return rows.map((row) => {
+    const linkDay = row.linkDay === null ? null : Number(row.linkDay);
+    const loop = loops[row.segment];
+    const { slot } = cycleForRun(
+      {
+        segment: row.segment,
+        enteredAt: row.enteredAt,
+        grant: { day: linkDay ?? 1, expiresAt: row.linkExpiresAt },
+      },
+      now,
+      loop,
+    );
+    const slotStats = statsByRunSlot.get(`${row.runId}:${slot}`);
+    return {
+      runId: row.runId,
+      userId: row.userId,
+      segment: row.segment,
+      enteredAt: row.enteredAt,
+      telegramId: row.telegramId,
+      linkId: row.linkId,
+      linkExpiresAt: row.linkExpiresAt,
+      linkDay,
+      lastAdminChatAt: row.lastAdminChatAt,
+      sentTemplateIds: slotStats?.templateIds ?? [],
+      usage: {
+        today: row.sentToday,
+        runToday: todayByRun.get(row.runId) ?? 0,
+        runTotal: slotStats?.total ?? 0,
+      },
+      status: statusFor(
+        row.maxPosition === null ? undefined : { maxPosition: row.maxPosition, startedAt: row.startedAt },
+        row.duration === null
+          ? NO_VIDEO_MARKS
+          : {
+              duration: row.duration,
+              introEndSec: row.introEndSec,
+              courseStartSec: row.courseStartSec,
+              priceSec: row.priceSec,
+            },
+        row,
+      ),
+      watch: { lastBeatAt: row.lastBeatAt, playing: row.playing ?? false },
+      loop,
+      nightRestriction,
+    };
+  });
 }
 
 async function markInterrupted(now: Date) {
@@ -270,50 +322,14 @@ async function deleteSent(
   return "ok";
 }
 
-async function deletePrevious(
-  api: Api,
-  userId: number,
-  chatId: number,
-  newId: number,
-  now: Date,
-  pace: Pace,
-): Promise<"ok" | "abort"> {
-  const rows = await db()
-    .select({ id: sentMessages.id, telegramMessageId: sentMessages.telegramMessageId, sentAt: sentMessages.sentAt })
-    .from(sentMessages)
-    .where(
-      and(
-        eq(sentMessages.userId, userId),
-        ne(sentMessages.id, newId),
-        isNotNull(sentMessages.sentAt),
-        isNotNull(sentMessages.telegramMessageId),
-        isNull(sentMessages.deletedAt),
-        isNull(sentMessages.deleteError),
-        replaceable,
-      ),
-    )
-    .orderBy(asc(sentMessages.id));
-  for (const row of rows) {
-    const result = await deleteSent(
-      api,
-      chatId,
-      { id: row.id, telegramMessageId: row.telegramMessageId!, sentAt: row.sentAt! },
-      now,
-      pace,
-    );
-    if (result === "abort") return "abort";
-  }
-  return "ok";
-}
-
 async function sendOne(api: Api, pick: Pick, now: Date, pace: Pace): Promise<SendResult> {
   const { candidate, item } = pick;
   const { userId, runId, telegramId } = candidate;
   const nowIso = now.toISOString();
 
   const reserved = await db().execute<{ id: string; click_token: string }>(sql`
-    insert into sent_messages (user_id, template_id, link_id, segment_run_id, due_at, created_at)
-    select ${userId}, ${item.template.id}, (select link_id from users where id = ${userId}), ${runId}, ${item.sendAt.toISOString()}::timestamptz, ${nowIso}::timestamptz
+    insert into sent_messages (user_id, template_id, link_id, segment_run_id, due_at, slot, created_at)
+    select ${userId}, ${item.template.id}, (select link_id from users where id = ${userId}), ${runId}, ${item.sendAt.toISOString()}::timestamptz, ${item.slot}, ${nowIso}::timestamptz
     where exists (
         select 1 from segment_runs r join users u on u.id = r.user_id
         where r.id = ${runId} and r.ended_at is null and u.bot_blocked = false
@@ -340,11 +356,6 @@ async function sendOne(api: Api, pick: Pick, now: Date, pace: Pace): Promise<Sen
     return "skip";
   }
 
-  if ((await deletePrevious(api, userId, telegramId, id, now, pace)) === "abort") {
-    await release();
-    return "abort";
-  }
-
   const targets: SentLinkTarget[] = row.buttons.map(() => null);
   const rendered = renderTemplate(toTemplate(row), context, {
     ref: `s${id}`,
@@ -352,7 +363,9 @@ async function sendOne(api: Api, pick: Pick, now: Date, pace: Pace): Promise<Sen
   });
   await db().update(sentMessages).set({ linkTargets: targets }).where(eq(sentMessages.id, id));
 
-  const delivery = await deliver(id, userId, now, pace, () => sendRendered(api, telegramId, rendered));
+  const delivery = await deliver(id, userId, now, pace, row.autoDeleteMinutes, () =>
+    sendRendered(api, telegramId, rendered),
+  );
   return delivery === "ok" || delivery === "abort" ? delivery : "skip";
 }
 
@@ -361,14 +374,16 @@ async function deliver(
   userId: number,
   now: Date,
   pace: Pace,
+  autoDeleteMinutes: number | null,
   send: () => Promise<Message>,
 ): Promise<Delivery> {
   try {
     await pace();
     const message = await send();
+    const deleteAt = autoDeleteMinutes !== null ? new Date(now.getTime() + autoDeleteMinutes * MINUTE_MS) : null;
     await db()
       .update(sentMessages)
-      .set({ sentAt: now, telegramMessageId: message.message_id })
+      .set({ sentAt: now, telegramMessageId: message.message_id, deleteAt })
       .where(eq(sentMessages.id, id));
     return "ok";
   } catch (error) {
@@ -437,34 +452,39 @@ async function sendSystem(
       createdAt: now,
     })
     .returning({ id: sentMessages.id });
-  const release = () => db().delete(sentMessages).where(eq(sentMessages.id, reserved.id));
 
-  if ((await deletePrevious(api, userId, telegramId, reserved.id, now, pace)) === "abort") {
-    await release();
-    return { result: "abort", sentMessageId: null };
-  }
+  const row = await findBotText(key);
+  const autoDeleteMinutes = row?.autoDeleteMinutes ?? null;
   const keyboard = button
     ? new InlineKeyboard().webApp(await botText(button), `${watchAppUrl()}?m=${reserved.id}`)
     : undefined;
-  const result = await deliver(reserved.id, userId, now, pace, () =>
+  const result = await deliver(reserved.id, userId, now, pace, autoDeleteMinutes, () =>
     sendBotText(api, telegramId, key, vars, keyboard),
   );
   return { result, sentMessageId: result === "ok" ? reserved.id : null };
 }
 
-function chainFor(candidate: Candidate, templates: MessageTemplateRow[]) {
-  return planChain(templates, {
-    segment: candidate.segment,
-    enteredAt: candidate.enteredAt,
-    status: candidate.status,
-    watch: candidate.watch,
-    grant: { day: candidate.linkDay ?? 1, expiresAt: candidate.linkExpiresAt },
-    lastAdminChatAt: candidate.lastAdminChatAt,
-  });
+function chainFor(candidate: Candidate, templates: MessageTemplateRow[], now: Date) {
+  return planChain(
+    templates,
+    {
+      segment: candidate.segment,
+      enteredAt: candidate.enteredAt,
+      status: candidate.status,
+      watch: candidate.watch,
+      grant: { day: candidate.linkDay ?? 1, expiresAt: candidate.linkExpiresAt },
+      lastAdminChatAt: candidate.lastAdminChatAt,
+      nightRestriction: candidate.nightRestriction,
+      loop: candidate.loop,
+    },
+    now,
+  );
 }
 
 async function sendDue(api: Api, now: Date, pace: Pace, candidates: Candidate[]) {
   if (now.getTime() < pausedUntil) return;
+  const nightRestriction = candidates[0]?.nightRestriction ?? (await nightRestrictionEnabled());
+  if (nightRestriction && isNightAt(now)) return;
 
   const templates = await db()
     .select()
@@ -479,7 +499,7 @@ async function sendDue(api: Api, now: Date, pace: Pace, candidates: Candidate[])
   const picks: Pick[] = [];
   for (const candidate of candidates) {
     if (isWatchingNow(candidate.watch, now) || isChattingWithAdminNow(candidate.lastAdminChatAt, now)) continue;
-    const plan = chainFor(candidate, bySegment.get(candidate.segment) ?? []);
+    const plan = chainFor(candidate, bySegment.get(candidate.segment) ?? [], now);
     const item = pickNext(plan, new Set(candidate.sentTemplateIds), now, candidate.usage, caps[candidate.segment]);
     if (item) picks.push({ candidate, item });
   }
@@ -512,7 +532,8 @@ async function sweepExpiredLinkMessages(api: Api, now: Date, pace: Pace) {
         isNotNull(sentMessages.telegramMessageId),
         isNull(sentMessages.deletedAt),
         isNull(sentMessages.deleteError),
-        replaceable,
+        isNull(sentMessages.templateId),
+        isNull(sentMessages.deleteAt),
       ),
     )
     .orderBy(asc(sentMessages.id))
@@ -749,14 +770,7 @@ async function processRollouts(api: Api, now: Date, pace: Pace) {
   }
 }
 
-async function nextDueForUser(userId: number, now: Date) {
-  const [candidate] = await loadCandidates(now, userId);
-  if (!candidate) return null;
-  const templates = await activeTemplateRows(candidate.segment);
-  return nextPendingDue(chainFor(candidate, templates), new Set(candidate.sentTemplateIds), now);
-}
-
-async function sweep(api: Api, now: Date, pace: Pace) {
+async function sweepAutoDeletes(api: Api, now: Date, pace: Pace) {
   if (now.getTime() < pausedUntil) return;
 
   await db()
@@ -764,6 +778,7 @@ async function sweep(api: Api, now: Date, pace: Pace) {
     .set({ deleteError: "too_old" })
     .where(
       and(
+        isNotNull(sentMessages.deleteAt),
         lte(sentMessages.sentAt, new Date(now.getTime() - DELETE_LIMIT_MS)),
         isNotNull(sentMessages.telegramMessageId),
         isNull(sentMessages.deletedAt),
@@ -774,7 +789,6 @@ async function sweep(api: Api, now: Date, pace: Pace) {
   const rows = await db()
     .select({
       id: sentMessages.id,
-      userId: sentMessages.userId,
       telegramMessageId: sentMessages.telegramMessageId,
       sentAt: sentMessages.sentAt,
       telegramId: users.telegramId,
@@ -783,27 +797,22 @@ async function sweep(api: Api, now: Date, pace: Pace) {
     .innerJoin(users, eq(users.id, sentMessages.userId))
     .where(
       and(
-        lte(sentMessages.sentAt, new Date(now.getTime() - SWEEP_AGE_MS)),
+        isNotNull(sentMessages.deleteAt),
+        lte(sentMessages.deleteAt, now),
         gt(sentMessages.sentAt, new Date(now.getTime() - DELETE_LIMIT_MS)),
         isNotNull(sentMessages.telegramMessageId),
         isNull(sentMessages.deletedAt),
         isNull(sentMessages.deleteError),
-        replaceable,
       ),
     )
-    .orderBy(asc(sentMessages.sentAt))
+    .orderBy(asc(sentMessages.deleteAt), asc(sentMessages.id))
     .limit(SWEEP_BATCH_SIZE);
 
   for (const row of rows) {
-    const sentAt = row.sentAt!;
-    if (now.getTime() - sentAt.getTime() < SWEEP_HARD_MS) {
-      const next = await nextDueForUser(row.userId, now);
-      if (next && next.getTime() <= sentAt.getTime() + SWEEP_HARD_MS) continue;
-    }
     const result = await deleteSent(
       api,
       row.telegramId,
-      { id: row.id, telegramMessageId: row.telegramMessageId!, sentAt },
+      { id: row.id, telegramMessageId: row.telegramMessageId!, sentAt: row.sentAt! },
       now,
       pace,
     );
@@ -834,9 +843,10 @@ export async function dispatchMessages(options: DispatchOptions = {}): Promise<v
       await sweepExpiredLinkMessages(api, clock(), pace);
       await processAppointments(api, clock(), pace);
       await processRollouts(api, clock(), pace);
+      await processBroadcasts(api, clock(), pace);
       const candidates = await loadCandidates(clock());
       await sendDue(api, clock(), pace, candidates);
-      await sweep(api, clock(), pace);
+      await sweepAutoDeletes(api, clock(), pace);
       await cleanupChat(api, clock(), pace);
     } finally {
       await conn`SELECT pg_advisory_unlock(${DISPATCH_LOCK_KEY})`;

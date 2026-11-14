@@ -4,8 +4,22 @@ import { runMigrations } from "@/db/migrate";
 import { settings } from "@/db/schema";
 import { setTestEnv } from "@/test/env";
 import { isolatedDatabase } from "@/test/isolatedDb";
-import { DEFAULT_MESSAGE_CAPS } from "@funnel/shared";
-import { chatCleanupHours, invalidateSettings, linkTtlHours, messageCaps } from "./service";
+import {
+  DEFAULT_MESSAGE_CAPS,
+  DEFAULT_NIGHT_RESTRICTION_ENABLED,
+  DEFAULT_SEGMENT_LOOPS,
+} from "@funnel/shared";
+import {
+  chatCleanupHours,
+  getAdminSettings,
+  invalidateSettings,
+  linkTtlHours,
+  messageCaps,
+  nightRestrictionEnabled,
+  segmentLoops,
+  SETTINGS_KEYS,
+  updateAdminSettings,
+} from "./service";
 
 const isolatedDb = isolatedDatabase("vf_settings_service");
 const testDbUrl = isolatedDb.url;
@@ -66,5 +80,57 @@ describe.skipIf(!testDbUrl)("Settings", () => {
       invalidateSettings();
       expect(await chatCleanupHours()).toBe(expected);
     }
+  });
+
+  it("defaults night restriction to false and ignores non-boolean values", async () => {
+    expect(await nightRestrictionEnabled()).toBe(DEFAULT_NIGHT_RESTRICTION_ENABLED);
+    await db().insert(settings).values({ key: SETTINGS_KEYS.nightRestrictionEnabled, value: "true" });
+    invalidateSettings();
+    expect(await nightRestrictionEnabled()).toBe(true);
+
+    for (const value of ["yes", "1", ""]) {
+      await db().delete(settings);
+      await db().insert(settings).values({ key: SETTINGS_KEYS.nightRestrictionEnabled, value });
+      invalidateSettings();
+      expect(await nightRestrictionEnabled()).toBe(false);
+    }
+  });
+
+  it("defaults segment loops to all true and ignores invalid values", async () => {
+    expect(await segmentLoops()).toEqual(DEFAULT_SEGMENT_LOOPS);
+    const custom = { A: true, B: false, C: true, E: false };
+    await db().insert(settings).values({ key: SETTINGS_KEYS.segmentLoops, value: JSON.stringify(custom) });
+    invalidateSettings();
+    expect(await segmentLoops()).toEqual(custom);
+
+    for (const value of ["nope", "{}", JSON.stringify({ A: true, B: "yes", C: true, E: true })]) {
+      await db().delete(settings);
+      await db().insert(settings).values({ key: SETTINGS_KEYS.segmentLoops, value });
+      invalidateSettings();
+      expect(await segmentLoops()).toEqual(DEFAULT_SEGMENT_LOOPS);
+    }
+  });
+
+  it("reads and updates combined admin settings", async () => {
+    const initial = await getAdminSettings();
+    expect(initial).toEqual({
+      linkTtlHours: 24,
+      messageCaps: DEFAULT_MESSAGE_CAPS,
+      chatCleanupHours: 24,
+      nightRestrictionEnabled: false,
+      segmentLoops: DEFAULT_SEGMENT_LOOPS,
+    });
+
+    const updated = await updateAdminSettings({
+      nightRestrictionEnabled: true,
+      segmentLoops: { A: false, B: true, C: false, E: true },
+    });
+    expect(updated).toEqual({
+      linkTtlHours: 24,
+      messageCaps: DEFAULT_MESSAGE_CAPS,
+      chatCleanupHours: 24,
+      nightRestrictionEnabled: true,
+      segmentLoops: { A: false, B: true, C: false, E: true },
+    });
   });
 });

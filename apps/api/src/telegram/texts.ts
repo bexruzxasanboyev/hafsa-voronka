@@ -6,13 +6,14 @@ import {
   type BotMessageKey,
   type BotTextItem,
   type BotTextKey,
+  type BotTextUpdate,
   botTextDefinitions,
   botTextKeys,
   escapeHtml,
   sanitizeTelegramHtml,
 } from "@funnel/shared";
 import { db } from "@/db";
-import { type BotTextRow, botTexts } from "@/db/schema";
+import { type BotTextRow, botTexts, chatMessages } from "@/db/schema";
 import { uploadToMediaChat } from "@/telegram/media";
 
 export const defaultBotTexts: Record<BotTextKey, string> = {
@@ -88,18 +89,43 @@ export async function sendBotText(
   key: BotMessageKey,
   vars: Record<string, string> = {},
   replyMarkup?: ReplyMarkup,
+  opts?: { trackChat?: boolean },
 ) {
   const row = (await overrides()).get(key);
   const text = renderHtml(row?.text ?? defaultBotTexts[key], vars);
   const options = { reply_markup: replyMarkup, parse_mode: "HTML" as const };
 
-  if (row?.mediaFileId && row.mediaType === "photo") {
-    return api.sendPhoto(chatId, row.mediaFileId, { ...options, caption: text });
+  const sent =
+    row?.mediaFileId && row.mediaType === "photo"
+      ? await api.sendPhoto(chatId, row.mediaFileId, { ...options, caption: text })
+      : row?.mediaFileId && row.mediaType === "video"
+        ? await api.sendVideo(chatId, row.mediaFileId, { ...options, caption: text, supports_streaming: true })
+        : await api.sendMessage(chatId, text, options);
+
+  if (opts?.trackChat !== false && row && (row.autoDeleteMinutes !== null || row.keepForever)) {
+    const messageId = (sent as { message_id?: unknown } | undefined)?.message_id;
+    if (typeof messageId === "number") {
+      const now = new Date();
+      const deleteAt =
+        row.autoDeleteMinutes !== null ? new Date(now.getTime() + row.autoDeleteMinutes * 60_000) : null;
+      await db()
+        .insert(chatMessages)
+        .values({
+          chatId,
+          messageId,
+          fromBot: true,
+          sentAt: now,
+          deleteAt,
+          keepForever: row.keepForever,
+        })
+        .onConflictDoUpdate({
+          target: [chatMessages.chatId, chatMessages.messageId],
+          set: { deleteAt, keepForever: row.keepForever },
+        });
+    }
   }
-  if (row?.mediaFileId && row.mediaType === "video") {
-    return api.sendVideo(chatId, row.mediaFileId, { ...options, caption: text, supports_streaming: true });
-  }
-  return api.sendMessage(chatId, text, options);
+
+  return sent;
 }
 
 export async function listBotTexts(): Promise<BotTextItem[]> {
@@ -113,6 +139,8 @@ export async function listBotTexts(): Promise<BotTextItem[]> {
       defaultText: defaultBotTexts[key],
       text: row?.text ?? null,
       media: row?.mediaFileId && row.mediaType ? { type: row.mediaType as BotMediaType } : null,
+      autoDeleteMinutes: row?.autoDeleteMinutes ?? null,
+      keepForever: row?.keepForever ?? false,
       updatedAt: row?.updatedAt.toISOString() ?? null,
     };
   });
@@ -122,7 +150,10 @@ export async function findBotText(key: BotTextKey) {
   return (await overrides()).get(key);
 }
 
-async function upsert(key: BotTextKey, values: Partial<Pick<BotTextRow, "text" | "mediaType" | "mediaFileId">>) {
+async function upsert(
+  key: BotTextKey,
+  values: Partial<Pick<BotTextRow, "text" | "mediaType" | "mediaFileId" | "autoDeleteMinutes" | "keepForever">>,
+) {
   await db()
     .insert(botTexts)
     .values({ key, ...values, updatedAt: new Date() })
@@ -130,8 +161,25 @@ async function upsert(key: BotTextKey, values: Partial<Pick<BotTextRow, "text" |
   invalidateBotTexts();
 }
 
-export async function saveBotText(key: BotTextKey, text: string) {
-  await upsert(key, { text: text === defaultBotTexts[key] ? null : text });
+export async function saveBotText(key: BotTextKey, update: BotTextUpdate) {
+  const isButton = botTextDefinitions[key].kind === "button";
+  const keepForever = isButton ? false : (update.keepForever ?? false);
+  const autoDeleteMinutes = isButton || keepForever ? null : (update.autoDeleteMinutes ?? null);
+  const isDefaultText = update.text === defaultBotTexts[key];
+
+  if (isDefaultText && autoDeleteMinutes === null && !keepForever) {
+    const existing = await findBotText(key);
+    if (!existing?.mediaFileId) {
+      await resetBotText(key);
+      return;
+    }
+  }
+
+  await upsert(key, {
+    text: isDefaultText ? null : update.text,
+    autoDeleteMinutes,
+    keepForever,
+  });
 }
 
 export async function resetBotText(key: BotTextKey) {

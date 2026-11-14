@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import {
+  autoDeleteMinutesSchema,
   BOT_MEDIA_MIME_TYPES,
   type BotButtonKey,
   type BotTextItem,
@@ -9,6 +10,7 @@ import {
   botVisibleLength,
   validateBotText,
 } from "@funnel/shared";
+import { AutoDeletePicker } from "@/components/admin/AutoDeletePicker";
 import { buttonUsage } from "@/components/admin/bot/scenarios";
 import { EditBadge, MediaThumb } from "@/components/admin/bot/BotChat";
 import { RichTextView } from "@/components/admin/messages/MessagePreview";
@@ -52,6 +54,7 @@ export function BotTextEditor({ item, mediaEnabled, onItems, onClose }: BotTextE
   const current = item.text ?? item.defaultText;
   const isButton = item.kind === "button";
   const [draft, setDraft] = useState(current);
+  const [autoDeleteMinutes, setAutoDeleteMinutes] = useState<number | null>(item.autoDeleteMinutes);
   const [busy, setBusy] = useState<Busy>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<"edit" | "preview">("edit");
@@ -59,11 +62,12 @@ export function BotTextEditor({ item, mediaEnabled, onItems, onClose }: BotTextE
   const fileInput = useRef<HTMLInputElement>(null);
 
   const hasMedia = item.media !== null;
-  const edited = item.text !== null || hasMedia;
+  const edited = item.text !== null || hasMedia || item.autoDeleteMinutes !== null || item.keepForever;
   const limit = botTextLimit(item.key, hasMedia);
   const length = isButton ? draft.length : botVisibleLength(draft);
   const validation = validateBotText(item.key, draft, hasMedia);
-  const dirty = draft !== current;
+  const autoDeleteValid = isButton || autoDeleteMinutesSchema.safeParse(autoDeleteMinutes).success;
+  const dirty = draft !== current || (!isButton && autoDeleteMinutes !== item.autoDeleteMinutes);
   const { label } = copy.items[item.key];
   const fieldError = error ?? (validation && draft.trim() ? errorMessage(item, validation) : null);
   const variables: EditorVariable[] = item.placeholders.map((name) => ({
@@ -86,7 +90,17 @@ export function BotTextEditor({ item, mediaEnabled, onItems, onClose }: BotTextE
   }
 
   const save = () =>
-    run("save", () => saveBotText(item.key, draft), onClose);
+    run(
+      "save",
+      () =>
+        saveBotText(
+          item.key,
+          isButton
+            ? { text: draft }
+            : { text: draft, autoDeleteMinutes, keepForever: autoDeleteMinutes === null },
+        ),
+      onClose,
+    );
 
   const reset = async () => {
     await run("reset", () => resetBotText(item.key), onClose);
@@ -113,7 +127,7 @@ export function BotTextEditor({ item, mediaEnabled, onItems, onClose }: BotTextE
           <span />
         )}
         <Button
-          disabled={!dirty || validation !== null || busy !== null}
+          disabled={!dirty || validation !== null || !autoDeleteValid || busy !== null}
           loading={busy === "save"}
           loadingLabel={copy.saving}
           onClick={() => void save()}
@@ -186,6 +200,14 @@ export function BotTextEditor({ item, mediaEnabled, onItems, onClose }: BotTextE
                     invalid={validation !== null && draft.trim() !== ""}
                     error={fieldError}
                     counter={counter}
+                  />
+
+                  <AutoDeletePicker
+                    value={autoDeleteMinutes}
+                    onChange={(next) => {
+                      setAutoDeleteMinutes(next);
+                      setError(null);
+                    }}
                   />
 
                   <input

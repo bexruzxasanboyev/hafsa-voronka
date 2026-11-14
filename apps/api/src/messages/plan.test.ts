@@ -3,6 +3,8 @@ import type { FunnelStatus } from "@funnel/shared";
 import {
   capReached,
   chainAnchor,
+  clockSendInWindow,
+  cycleForRun,
   DAILY_CAP,
   GRACE_MS,
   isWatchingNow,
@@ -12,6 +14,7 @@ import {
   pickNext,
   planChain,
   type ScheduleTemplate,
+  shiftOutOfNight,
   funnelDayAt,
   type SendUsage,
   tashkentDayStart,
@@ -37,13 +40,25 @@ function localTime(date: Date) {
 
 function planFor(
   templates: ScheduleTemplate[],
-  run: { segment?: "A" | "B" | "C"; entered: string; lastBeatAt?: string; day?: number; expires?: string },
+  run: {
+    segment?: "A" | "B" | "C" | "E";
+    entered: string;
+    lastBeatAt?: string;
+    day?: number;
+    expires?: string;
+    nightRestriction?: boolean;
+    loop?: boolean;
+    now?: string;
+  },
 ) {
   return planChain(templates, {
     segment: run.segment ?? "A",
     enteredAt: T(run.entered),
     watch: run.lastBeatAt ? { lastBeatAt: T(run.lastBeatAt), playing: false } : null,
     grant: { day: run.day ?? 1, expiresAt: run.expires ? T(run.expires) : null },
+    nightRestriction: run.nightRestriction,
+    loop: run.loop,
+    now: run.now ? T(run.now) : T(run.entered),
   });
 }
 
@@ -175,14 +190,14 @@ describe("planChain: triggers after the expiry", () => {
     expect(plan.map((item) => localTime(item.sendAt))).toEqual(["2026-10-21T09:00"]);
   });
 
-  it("skips triggers of the current and earlier days and sends nothing past day 7", () => {
-    const plan = planFor([trigger(2), trigger(3), trigger(7)], {
+  it("skips triggers of the current and earlier days and sends nothing past day 30", () => {
+    const plan = planFor([trigger(2), trigger(3), trigger(30)], {
       entered: "2026-10-20 09:00",
       day: 3,
       expires: "2026-10-21 09:00",
     });
-    expect(plan.map((item) => item.template.day)).toEqual([7]);
-    expect(planFor([trigger(7)], { entered: "2026-10-20 09:00", day: 8, expires: "2026-10-21 09:00" })).toEqual([]);
+    expect(plan.map((item) => item.template.day)).toEqual([30]);
+    expect(planFor([trigger(30)], { entered: "2026-10-20 09:00", day: 31, expires: "2026-10-21 09:00" })).toEqual([]);
   });
 
   it("sends no triggers before the link has an expiry", () => {
@@ -324,5 +339,177 @@ describe("caps", () => {
     const loose = { daily: 50, total: null };
     expect(capReached({ today: DAILY_CAP, runToday: 0, runTotal: 0 }, loose)).toBe(true);
     expect(capReached({ today: DAILY_CAP - 1, runToday: 9, runTotal: 100 }, loose)).toBe(false);
+  });
+});
+
+describe("clockSendInWindow and shiftOutOfNight", () => {
+  it("finds the first Tashkent clock occurrence at or after afterAt", () => {
+    expect(clockSendInWindow(9 * 60, T("2026-10-20 09:00"))).toEqual(T("2026-10-20 09:00"));
+    expect(clockSendInWindow(10 * 60, T("2026-10-20 09:00"))).toEqual(T("2026-10-20 10:00"));
+    expect(clockSendInWindow(8 * 60, T("2026-10-20 09:00"))).toEqual(T("2026-10-21 08:00"));
+    expect(clockSendInWindow(9 * 60, local("2026-10-20T09:00:30"))).toEqual(T("2026-10-21 09:00"));
+  });
+
+  it("shifts 23:00..06:59 Tashkent to 07:00 and leaves daytime untouched", () => {
+    expect(shiftOutOfNight(local("2026-10-20T22:59:59"))).toEqual(local("2026-10-20T22:59:59"));
+    expect(shiftOutOfNight(local("2026-10-20T23:00:00"))).toEqual(local("2026-10-21T07:00:00"));
+    expect(shiftOutOfNight(local("2026-10-21T02:30:00"))).toEqual(local("2026-10-21T07:00:00"));
+    expect(shiftOutOfNight(local("2026-10-21T06:59:59"))).toEqual(local("2026-10-21T07:00:00"));
+    expect(shiftOutOfNight(local("2026-10-21T07:00:00"))).toEqual(local("2026-10-21T07:00:00"));
+  });
+});
+
+describe("timingMode and nightRestriction", () => {
+  it("supports explicit clock mode on day-1 link-bound reminders and relative mode on day-3 C reminders", () => {
+    const aClock = template({ day: 1, timingMode: "clock", timingValue: 18 * 60 });
+    const aPlan = planFor([aClock], { entered: "2026-10-20 15:00", expires: "2026-10-21 15:00" });
+    expect(aPlan.map((item) => localTime(item.sendAt))).toEqual(["2026-10-20T18:00"]);
+
+    const cRelative = template({ day: 3, timingMode: "relative", timingValue: 90 });
+    const cPlan = planFor([cRelative], { segment: "C", entered: "2026-10-20 15:00" });
+    expect(cPlan.map((item) => localTime(item.sendAt))).toEqual(["2026-10-22T16:30"]);
+
+    const eClock = template({ day: 1, timingMode: "clock", timingValue: 10 * 60 });
+    const ePlan = planFor([eClock], { segment: "E", entered: "2026-10-20 15:00" });
+    expect(ePlan.map((item) => localTime(item.sendAt))).toEqual(["2026-10-21T10:00"]);
+  });
+
+  it("shifts night items to 07:00 only when nightRestriction is enabled and keeps cross-midnight items in pickNext", () => {
+    const nightReminder = template({ day: 1, timingMode: "relative", timingValue: 30 });
+    const nightTrigger = template({ day: 2, kind: "trigger", timingMode: "clock", timingValue: 2 * 60 });
+
+    const offPlan = planFor([nightReminder, nightTrigger], {
+      entered: "2026-10-20 23:00",
+      expires: "2026-10-22 09:00",
+      nightRestriction: false,
+    });
+    expect(offPlan.map((item) => localTime(item.sendAt))).toEqual(["2026-10-20T23:30", "2026-10-23T02:00"]);
+
+    const onPlan = planFor([nightReminder, nightTrigger], {
+      entered: "2026-10-20 23:00",
+      expires: "2026-10-22 09:00",
+      nightRestriction: true,
+    });
+    expect(onPlan.map((item) => localTime(item.sendAt))).toEqual(["2026-10-21T07:00", "2026-10-23T07:00"]);
+    expect(pickNext(onPlan, none, T("2026-10-21 07:00"), unused)?.template).toBe(nightReminder);
+
+    const cNight = template({ day: 3, timingMode: "clock", timingValue: 23 * 60 + 30 });
+    const cPlan = planFor([cNight], {
+      segment: "C",
+      entered: "2026-10-20 10:00",
+      nightRestriction: true,
+      now: "2026-10-23 07:00",
+    });
+    expect(cPlan.map((item) => localTime(item.sendAt))).toEqual(["2026-10-23T07:00"]);
+    expect(pickNext(cPlan, none, T("2026-10-23 07:00"), unused)?.template).toBe(cNight);
+  });
+});
+
+describe("30-day grid and perpetual cycle wrap", () => {
+  it("wraps non-link segments from Day 30 to Day 1 with slot 1 when loop is enabled", () => {
+    const day1 = template({ id: 101, day: 1, timingMode: "relative", timingValue: 60 });
+    const day30 = template({ id: 130, day: 30, timingMode: "clock", timingValue: 10 * 60 });
+
+    const cycle0 = planFor([day1, day30], {
+      segment: "C",
+      entered: "2026-10-20 15:00",
+      loop: true,
+      now: "2026-11-18 10:00",
+    });
+    expect(cycle0.map((item) => [item.template.id, item.slot, localTime(item.sendAt)])).toEqual([
+      [101, "", "2026-10-20T16:00"],
+      [130, "", "2026-11-18T10:00"],
+    ]);
+
+    const cycle1 = planFor([day1, day30], {
+      segment: "C",
+      entered: "2026-10-20 15:00",
+      loop: true,
+      now: "2026-11-19 01:00",
+    });
+    expect(cycle1.map((item) => [item.template.id, item.slot, localTime(item.sendAt)])).toEqual([
+      [101, "1", "2026-11-19T01:00"],
+      [130, "1", "2026-12-18T10:00"],
+    ]);
+    expect(pickNext(cycle1, none, T("2026-11-19 01:00"), unused)?.slot).toBe("1");
+
+    const cycle2 = cycleForRun({ segment: "E", enteredAt: T("2026-10-20 15:00") }, T("2026-12-19 00:00"), true);
+    expect(cycle2).toEqual({ cycleIndex: 2, slot: "2" });
+
+    const disabled = planFor([day1, day30], {
+      segment: "C",
+      entered: "2026-10-20 15:00",
+      loop: false,
+      now: "2026-11-19 01:00",
+    });
+    expect(disabled.every((item) => item.slot === "")).toBe(true);
+    expect(pickNext(disabled, none, T("2026-11-19 01:00"), unused)).toBeNull();
+  });
+
+  it("wraps link-bound segments after Day 30 into synthetic Day 1..30 cycle with slot 1", () => {
+    const day1Reminder = template({ id: 201, day: 1, timingMode: "relative", timingValue: 60 });
+    const day2Trigger = template({ id: 202, day: 2, kind: "trigger", timingMode: "clock", timingValue: 10 * 60 });
+    const day30Trigger = template({ id: 230, day: 30, kind: "trigger", timingMode: "clock", timingValue: 10 * 60 });
+
+    const day30 = planFor([day1Reminder, day2Trigger, day30Trigger], {
+      segment: "A",
+      entered: "2026-10-20 09:00",
+      day: 1,
+      expires: "2026-10-21 09:00",
+      loop: true,
+      now: "2026-11-19 08:59",
+    });
+    expect(day30.map((item) => [item.template.id, item.slot, localTime(item.sendAt)])).toEqual([
+      [201, "", "2026-10-20T10:00"],
+      [202, "", "2026-10-21T10:00"],
+      [230, "", "2026-11-18T10:00"],
+    ]);
+
+    const day31 = planFor([day1Reminder, day2Trigger, day30Trigger], {
+      segment: "A",
+      entered: "2026-10-20 09:00",
+      day: 1,
+      expires: "2026-10-21 09:00",
+      loop: true,
+      now: "2026-11-19 10:00",
+    });
+    expect(day31.map((item) => [item.template.id, item.slot, localTime(item.sendAt)])).toEqual([
+      [201, "1", "2026-11-19T10:00"],
+      [202, "1", "2026-11-20T10:00"],
+      [230, "1", "2026-12-18T10:00"],
+    ]);
+    expect(pickNext(day31, none, T("2026-11-19 10:00"), unused)).toMatchObject({ template: day1Reminder, slot: "1" });
+    expect(pickNext(day31, new Set([201]), T("2026-11-20 10:00"), unused)).toMatchObject({
+      template: day2Trigger,
+      slot: "1",
+    });
+  });
+
+  it("wraps link-bound segments accurately when initial grant started on day > 1", () => {
+    const day1Reminder = template({ id: 301, day: 1, timingMode: "relative", timingValue: 60 });
+    const day2Trigger = template({ id: 302, day: 2, kind: "trigger", timingMode: "clock", timingValue: 10 * 60 });
+
+    const stillCycle0 = planFor([day1Reminder, day2Trigger], {
+      segment: "B",
+      entered: "2026-10-20 09:00",
+      day: 3,
+      expires: "2026-10-21 09:00",
+      loop: true,
+      now: "2026-11-17 08:59",
+    });
+    expect(stillCycle0).toEqual([]);
+
+    const wrapped = planFor([day1Reminder, day2Trigger], {
+      segment: "B",
+      entered: "2026-10-20 09:00",
+      day: 3,
+      expires: "2026-10-21 09:00",
+      loop: true,
+      now: "2026-11-17 09:00",
+    });
+    expect(wrapped.map((item) => [item.template.id, item.slot, localTime(item.sendAt)])).toEqual([
+      [301, "1", "2026-11-17T10:00"],
+      [302, "1", "2026-11-18T10:00"],
+    ]);
   });
 });

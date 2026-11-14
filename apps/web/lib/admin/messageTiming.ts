@@ -1,11 +1,23 @@
-import { type FunnelSegment, linkBoundSegments, type TemplateKind } from "@funnel/shared";
+import {
+  defaultTimingModeFor,
+  type FunnelSegment,
+  linkBoundSegments,
+  type TemplateKind,
+  type TemplateTimingMode,
+} from "@funnel/shared";
 import { adminUz } from "../i18n/admin";
 
 const copy = adminUz.messages;
 
 export type TimingMode = "relative" | "clock" | "expiry";
 
-export type TimingSubject = { segment: FunnelSegment; day: number; kind: TemplateKind; atExpiry: boolean };
+export type TimingSubject = {
+  segment: FunnelSegment;
+  day: number;
+  kind: TemplateKind;
+  atExpiry: boolean;
+  timingMode?: TemplateTimingMode;
+};
 
 type TimedSubject = TimingSubject & { minute: number };
 
@@ -14,9 +26,9 @@ export type RelativeAnchor = keyof typeof copy.timing.after;
 const RELATIVE_DEFAULT_MINUTE = 60;
 const CLOCK_DEFAULT_MINUTE = 600;
 
-export function timingMode({ segment, day, kind, atExpiry }: TimingSubject): TimingMode {
+export function timingMode({ segment, day, kind, atExpiry, timingMode: explicitMode }: TimingSubject): TimingMode {
   if (kind === "trigger") return atExpiry ? "expiry" : "clock";
-  return day === 1 || linkBoundSegments.includes(segment) ? "relative" : "clock";
+  return explicitMode ?? defaultTimingModeFor(segment, day, kind);
 }
 
 export function relativeAnchor(segment: FunnelSegment, day: number): RelativeAnchor {

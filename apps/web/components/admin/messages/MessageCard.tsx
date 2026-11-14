@@ -1,11 +1,12 @@
 "use client";
 
 import { type MessageTemplate, plainTextPreview, renderPlainText, SAMPLE_CONTEXT, variableValues } from "@funnel/shared";
+import { AutoDeleteBadge } from "@/components/admin/AutoDeletePicker";
 import { Badge } from "@/components/admin/ui/Badge";
 import { IconButton } from "@/components/admin/ui/IconButton";
 import { Switch } from "@/components/admin/ui/Switch";
 import { stopPointLabel, type VideoMarks } from "@/components/admin/messages/StopPointPicker";
-import { ButtonsIcon, PinIcon, ChevronDownIcon, ChevronUpIcon, PhotoIcon, VideoIcon, VoiceIcon } from "@/components/icons";
+import { ButtonsIcon, ChevronDownIcon, ChevronUpIcon, PhotoIcon, VideoIcon, VoiceIcon } from "@/components/icons";
 import { timelineLabel } from "@/lib/admin/messageTiming";
 import { adminUz } from "@/lib/i18n/admin";
 
@@ -19,12 +20,7 @@ function MediaIcon({ type }: { type: keyof typeof mediaIcons }) {
 }
 
 export function PermanentBadge() {
-  return (
-    <Badge>
-      <PinIcon className="mr-1 h-3 w-3" />
-      {copy.permanentBadge}
-    </Badge>
-  );
+  return <AutoDeleteBadge minutes={null} />;
 }
 
 type MessageCardProps = {
@@ -51,14 +47,12 @@ export function MessageCard({ item, videoMarks, onEdit, onToggle, onMoveUp, onMo
           {timelineLabel(item)}
         </span>
         <span className={`flex min-w-0 flex-1 flex-col gap-1 ${item.isActive ? "" : "opacity-60"}`}>
-          {(item.statuses || item.isPermanent) && (
-            <span className="flex flex-wrap gap-1">
-              {item.isPermanent && <PermanentBadge />}
-              {item.statuses?.map((status) => (
-                <Badge key={status}>{stopPointLabel(status, videoMarks)}</Badge>
-              ))}
-            </span>
-          )}
+          <span className="flex flex-wrap gap-1">
+            <AutoDeleteBadge minutes={item.autoDeleteMinutes} />
+            {item.statuses?.map((status) => (
+              <Badge key={status}>{stopPointLabel(status, videoMarks)}</Badge>
+            ))}
+          </span>
           <span className="line-clamp-2 text-sm text-siyoh">
             {renderPlainText(plainTextPreview(item.text, 140), sampleValues)}
           </span>

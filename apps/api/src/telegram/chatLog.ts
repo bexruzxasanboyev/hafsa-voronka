@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, isNull, lte } from "drizzle-orm";
+import { and, asc, eq, gt, isNotNull, isNull, lte, or } from "drizzle-orm";
 import { type Api, GrammyError } from "grammy";
 import { db } from "@/db";
 import { type ChatMessage, chatMessages } from "@/db/schema";
@@ -52,6 +52,8 @@ export async function replaceBotReply(api: Api, chatId: number, send: () => Prom
       and(
         eq(chatMessages.chatId, chatId),
         eq(chatMessages.fromBot, true),
+        isNull(chatMessages.deleteAt),
+        eq(chatMessages.keepForever, false),
         gt(chatMessages.sentAt, new Date(now.getTime() - DELETE_LIMIT_MS)),
         undeleted,
       ),
@@ -70,13 +72,29 @@ export async function cleanupChatMessages(api: Api, now: Date, pace: Pace) {
   await db()
     .update(chatMessages)
     .set({ deleteError: "too_old" })
-    .where(and(lte(chatMessages.sentAt, new Date(now.getTime() - DELETE_LIMIT_MS)), undeleted));
+    .where(
+      and(
+        lte(chatMessages.sentAt, new Date(now.getTime() - DELETE_LIMIT_MS)),
+        eq(chatMessages.keepForever, false),
+        undeleted,
+      ),
+    );
 
   const cleanupAgeMs = (await chatCleanupHours()) * HOUR_MS;
   const rows = await db()
     .select()
     .from(chatMessages)
-    .where(and(lte(chatMessages.sentAt, new Date(now.getTime() - cleanupAgeMs)), undeleted))
+    .where(
+      and(
+        gt(chatMessages.sentAt, new Date(now.getTime() - DELETE_LIMIT_MS)),
+        eq(chatMessages.keepForever, false),
+        undeleted,
+        or(
+          and(isNotNull(chatMessages.deleteAt), lte(chatMessages.deleteAt, now)),
+          and(isNull(chatMessages.deleteAt), lte(chatMessages.sentAt, new Date(now.getTime() - cleanupAgeMs))),
+        ),
+      ),
+    )
     .orderBy(asc(chatMessages.sentAt))
     .limit(CLEANUP_BATCH_SIZE);
   for (const row of rows) {

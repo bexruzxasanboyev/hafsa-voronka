@@ -1,9 +1,15 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { hashPassword } from "@/admin/auth";
 import { closeDb, db } from "@/db";
 import { runMigrations } from "@/db/migrate";
-import { DEFAULT_MESSAGE_CAPS, businessConnectionsResponseSchema, businessConnectionItemSchema } from "@funnel/shared";
+import {
+  DEFAULT_MESSAGE_CAPS,
+  DEFAULT_NIGHT_RESTRICTION_ENABLED,
+  DEFAULT_SEGMENT_LOOPS,
+  businessConnectionsResponseSchema,
+  businessConnectionItemSchema,
+} from "@funnel/shared";
 import { businessConnections, settings, users } from "@/db/schema";
 import { isolatedDatabase } from "@/test/isolatedDb";
 import { setTestEnv } from "@/test/env";
@@ -58,7 +64,13 @@ describe.skipIf(!database.url)("Admin settings", () => {
   it("returns the default link TTL", async () => {
     const res = await app.request("/admin/settings", { headers: { cookie } });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ linkTtlHours: 24, messageCaps: DEFAULT_MESSAGE_CAPS, chatCleanupHours: 24 });
+    expect(await res.json()).toEqual({
+      linkTtlHours: 24,
+      messageCaps: DEFAULT_MESSAGE_CAPS,
+      chatCleanupHours: 24,
+      nightRestrictionEnabled: DEFAULT_NIGHT_RESTRICTION_ENABLED,
+      segmentLoops: DEFAULT_SEGMENT_LOOPS,
+    });
   });
 
   it("rejects out-of-range and non-numeric values", async () => {
@@ -72,10 +84,22 @@ describe.skipIf(!database.url)("Admin settings", () => {
   it("saves the TTL and applies it to users registered afterwards", async () => {
     const saved = await put({ linkTtlHours: 48 });
     expect(saved.status).toBe(200);
-    expect(await saved.json()).toEqual({ linkTtlHours: 48, messageCaps: DEFAULT_MESSAGE_CAPS, chatCleanupHours: 24 });
+    expect(await saved.json()).toEqual({
+      linkTtlHours: 48,
+      messageCaps: DEFAULT_MESSAGE_CAPS,
+      chatCleanupHours: 24,
+      nightRestrictionEnabled: DEFAULT_NIGHT_RESTRICTION_ENABLED,
+      segmentLoops: DEFAULT_SEGMENT_LOOPS,
+    });
 
     const res = await app.request("/admin/settings", { headers: { cookie } });
-    expect(await res.json()).toEqual({ linkTtlHours: 48, messageCaps: DEFAULT_MESSAGE_CAPS, chatCleanupHours: 24 });
+    expect(await res.json()).toEqual({
+      linkTtlHours: 48,
+      messageCaps: DEFAULT_MESSAGE_CAPS,
+      chatCleanupHours: 24,
+      nightRestrictionEnabled: DEFAULT_NIGHT_RESTRICTION_ENABLED,
+      segmentLoops: DEFAULT_SEGMENT_LOOPS,
+    });
 
     const { linkTtlHours } = await import("./service");
     expect(await linkTtlHours()).toBe(48);
@@ -91,7 +115,13 @@ describe.skipIf(!database.url)("Admin settings", () => {
     const caps = { A: { daily: 8, total: null }, B: { daily: 3, total: 6 }, C: { daily: 10, total: 20 }, E: { daily: 2, total: 4 } };
     const saved = await put({ messageCaps: caps });
     expect(saved.status).toBe(200);
-    expect(await saved.json()).toEqual({ linkTtlHours: 48, messageCaps: caps, chatCleanupHours: 24 });
+    expect(await saved.json()).toEqual({
+      linkTtlHours: 48,
+      messageCaps: caps,
+      chatCleanupHours: 24,
+      nightRestrictionEnabled: DEFAULT_NIGHT_RESTRICTION_ENABLED,
+      segmentLoops: DEFAULT_SEGMENT_LOOPS,
+    });
     const { messageCaps } = await import("./service");
     expect(await messageCaps()).toEqual(caps);
   });
@@ -224,6 +254,36 @@ describe.skipIf(!database.url)("Admin settings", () => {
     for (const B of [{ daily: 11, total: 7 }, { daily: 0, total: 7 }, { daily: 4, total: 0 }, { daily: 4 }]) {
       const res = await put({ messageCaps: { ...valid, B } });
       expect(res.status).toBe(400);
+    }
+  });
+
+  it("saves night restriction and segment loops and kicks the dispatcher when changed", async () => {
+    const dispatch = await import("@/messages/dispatch");
+    const kickSpy = vi.spyOn(dispatch, "kickMessageDispatcher").mockImplementation(() => {});
+    try {
+      const unchanged = await put({ linkTtlHours: 24 });
+      expect(unchanged.status).toBe(200);
+      expect(kickSpy).not.toHaveBeenCalled();
+
+      const nightSaved = await put({ nightRestrictionEnabled: true });
+      expect(nightSaved.status).toBe(200);
+      expect((await nightSaved.json()).nightRestrictionEnabled).toBe(true);
+      expect(kickSpy).toHaveBeenCalledTimes(1);
+
+      const loops = { A: true, B: false, C: true, E: false };
+      const loopsSaved = await put({ segmentLoops: loops });
+      expect(loopsSaved.status).toBe(200);
+      expect((await loopsSaved.json()).segmentLoops).toEqual(loops);
+      expect(kickSpy).toHaveBeenCalledTimes(2);
+
+      const { nightRestrictionEnabled, segmentLoops } = await import("./service");
+      expect(await nightRestrictionEnabled()).toBe(true);
+      expect(await segmentLoops()).toEqual(loops);
+
+      expect((await put({ nightRestrictionEnabled: "true" })).status).toBe(400);
+      expect((await put({ segmentLoops: { A: true } })).status).toBe(400);
+    } finally {
+      kickSpy.mockRestore();
     }
   });
 });

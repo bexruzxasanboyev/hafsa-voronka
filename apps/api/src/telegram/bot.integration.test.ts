@@ -218,6 +218,54 @@ describe.skipIf(!testDbUrl)("Bot registration flow", () => {
     expect(deletes).toEqual([{ chat_id: chatId, message_id: 1 }]);
   });
 
+  it("respects deleteAt and keepForever in replaceBotReply and cleanupChatMessages", async () => {
+    const { cleanupChatMessages, replaceBotReply } = await import("@/telegram/chatLog");
+    const chatId = 7_950_000 + Math.floor(Math.random() * 100_000);
+    const now = new Date();
+    const minutesAgo = (minutes: number) => new Date(now.getTime() - minutes * 60_000);
+    const hoursAgo = (hours: number) => new Date(now.getTime() - hours * 3_600_000);
+
+    await db()
+      .insert(chatMessages)
+      .values([
+        { chatId, messageId: 10, fromBot: true, sentAt: minutesAgo(5), deleteAt: null, keepForever: false },
+        { chatId, messageId: 11, fromBot: true, sentAt: minutesAgo(5), deleteAt: new Date(now.getTime() + 60_000), keepForever: false },
+        { chatId, messageId: 12, fromBot: true, sentAt: minutesAgo(5), deleteAt: null, keepForever: true },
+      ]);
+
+    await replaceBotReply(testBot.api, chatId, async () => ({ message_id: 13 }));
+
+    const replacedDeletes = calls
+      .filter((c) => c.method === "deleteMessage" && c.payload.chat_id === chatId)
+      .map((c) => c.payload.message_id);
+    expect(replacedDeletes).toEqual([10]);
+
+    calls.length = 0;
+    await db()
+      .insert(chatMessages)
+      .values([
+        { chatId, messageId: 20, fromBot: true, sentAt: minutesAgo(20), deleteAt: minutesAgo(1), keepForever: false },
+        { chatId, messageId: 21, fromBot: true, sentAt: hoursAgo(50), deleteAt: null, keepForever: true },
+        { chatId, messageId: 22, fromBot: true, sentAt: hoursAgo(50), deleteAt: null, keepForever: false },
+      ]);
+
+    await cleanupChatMessages(testBot.api, now, async () => {});
+
+    const cleanupDeletes = calls
+      .filter((c) => c.method === "deleteMessage" && c.payload.chat_id === chatId)
+      .map((c) => c.payload.message_id);
+    expect(cleanupDeletes).toEqual([20]);
+
+    const rows = await db().select().from(chatMessages).where(eq(chatMessages.chatId, chatId));
+    const byId = new Map(rows.map((r) => [r.messageId, r]));
+    expect(byId.get(20)?.deletedAt).toEqual(now);
+    expect(byId.get(21)?.deletedAt).toBeNull();
+    expect(byId.get(21)?.deleteError).toBeNull();
+    expect(byId.get(22)?.deleteError).toBe("too_old");
+    expect(byId.get(11)?.deletedAt).toBeNull();
+    expect(byId.get(12)?.deletedAt).toBeNull();
+  });
+
   it("ignores group chatter and answers /chatid in groups", async () => {
     const groupId = -1_000_000_000_000 - Math.floor(Math.random() * 100_000);
     const groupUpdate = (text: string, entities?: unknown[]) =>

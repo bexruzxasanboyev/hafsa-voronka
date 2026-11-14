@@ -1,4 +1,9 @@
-import { type BotTextItem, type BotTextKey, botTextsResponseSchema } from "@funnel/shared";
+import {
+  type BotTextItem,
+  type BotTextKey,
+  type BotTextUpdate,
+  botTextsResponseSchema,
+} from "@funnel/shared";
 import { API_URL } from "@/lib/api";
 import { authHeaders } from "@/lib/admin/api";
 
@@ -26,11 +31,11 @@ export function fetchBotTexts() {
   return call("");
 }
 
-export function saveBotText(key: BotTextKey, text: string) {
+export function saveBotText(key: BotTextKey, input: BotTextUpdate) {
   return call(`/${key}`, {
     method: "PUT",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ text }),
+    body: JSON.stringify(input),
   });
 }
 

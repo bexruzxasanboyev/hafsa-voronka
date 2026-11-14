@@ -27,7 +27,7 @@ export const TEMPLATE_TEXT_LIMITS = {
   caption: 1024,
 } as const;
 
-export const TEMPLATE_DAYS = 7;
+export const TEMPLATE_DAYS = 30;
 export const MINUTES_PER_DAY = 1440;
 export const NIGHT = { start: 1380, end: 420 } as const;
 export const TASHKENT_OFFSET_MS = 5 * 60 * 60 * 1000;
@@ -46,6 +46,25 @@ export const statusTargetSegments: readonly FunnelSegment[] = ["B"];
 export const templateKinds = ["reminder", "trigger"] as const;
 
 export type TemplateKind = (typeof templateKinds)[number];
+
+export const templateTimingModes = ["relative", "clock"] as const;
+
+export type TemplateTimingMode = (typeof templateTimingModes)[number];
+
+export const AUTO_DELETE_PRESETS = [60, 180, 360, 720, 1440] as const;
+
+export const MAX_AUTO_DELETE_MINUTES = 2870;
+
+export const autoDeleteMinutesSchema = z.number().int().min(1).max(MAX_AUTO_DELETE_MINUTES).nullable();
+
+export function defaultTimingModeFor(
+  segment: FunnelSegment,
+  day: number,
+  kind: TemplateKind = "reminder",
+): TemplateTimingMode {
+  if (kind === "trigger") return "clock";
+  return !linkBoundSegments.includes(segment) && day >= 2 ? "clock" : "relative";
+}
 
 export const TRIGGER_FIRST_DAY = 2;
 
@@ -435,7 +454,7 @@ export function defaultMinute(day: number): number {
   return day === 1 ? 60 : 600;
 }
 
-type TimelinePoint = Pick<MessageTemplate, "day" | "minute">;
+type TimelinePoint = Pick<MessageTemplate, "day" | "minute"> & { timingMode?: TemplateTimingMode };
 
 export function compareTimeline(
   a: Pick<MessageTemplate, "day" | "minute" | "position" | "id">,
@@ -445,7 +464,7 @@ export function compareTimeline(
 }
 
 export function isSameMoment(a: TimelinePoint, b: TimelinePoint): boolean {
-  return a.day === b.day && a.minute === b.minute;
+  return (a.timingMode ?? "relative") === (b.timingMode ?? "relative") && a.day === b.day && a.minute === b.minute;
 }
 
 export const templateMediaTypes = ["photo", "video", "voice"] as const;
@@ -521,12 +540,14 @@ export const messageTemplateBaseSchema = z.object({
   text: z.string().max(TEMPLATE_TEXT_LIMITS.message * 3),
   media: templateMediaSchema.nullable(),
   minute: z.number().int(),
+  timingMode: z.enum(templateTimingModes).optional(),
   buttons: z.array(templateButtonSchema).max(MAX_TEMPLATE_BUTTONS),
   isActive: z.boolean(),
   statuses: z.array(z.enum(funnelStatuses)).min(1).max(funnelStatuses.length).nullable().default(null),
   kind: z.enum(templateKinds).default("reminder"),
   atExpiry: z.boolean().default(false),
   isPermanent: z.boolean().default(false),
+  autoDeleteMinutes: autoDeleteMinutesSchema.optional(),
 });
 
 export type MessageTemplateInput = z.infer<typeof messageTemplateBaseSchema>;
@@ -534,6 +555,7 @@ export type MessageTemplateInput = z.infer<typeof messageTemplateBaseSchema>;
 export type TemplateValidationIssue =
   | { path: "text"; error: TemplateTextError["error"]; variable?: string }
   | { path: "minute"; error: TimingError }
+  | { path: "timingMode"; error: "trigger_clock_only" }
   | { path: "statuses"; error: "statuses_invalid" }
   | { path: "kind"; error: "trigger_not_allowed" }
   | { path: "atExpiry"; error: "at_expiry_trigger_only" };
@@ -543,6 +565,9 @@ export function validateTemplateInput(input: MessageTemplateInput): TemplateVali
   if (textError) return { path: "text", ...textError };
   const timingError = validateTiming(input.day, input.minute);
   if (timingError) return { path: "minute", error: timingError };
+  if (input.kind === "trigger" && input.timingMode === "relative") {
+    return { path: "timingMode", error: "trigger_clock_only" };
+  }
   if (statusesError(input.segment, input.statuses)) return { path: "statuses", error: "statuses_invalid" };
   if (input.kind === "trigger" && !triggerAllowed(input.segment, input.day)) {
     return { path: "kind", error: "trigger_not_allowed" };
@@ -564,6 +589,8 @@ export const messageTemplateInputSchema = messageTemplateBaseSchema.superRefine(
 export const messageTemplateSchema = messageTemplateBaseSchema.extend({
   id: z.number().int(),
   position: z.number().int(),
+  timingMode: z.enum(templateTimingModes),
+  autoDeleteMinutes: autoDeleteMinutesSchema,
   updatedAt: z.string(),
 });
 

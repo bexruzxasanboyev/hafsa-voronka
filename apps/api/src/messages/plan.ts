@@ -1,4 +1,5 @@
 import {
+  defaultTimingModeFor,
   EXTENDED_EXPIRY_MINUTE,
   type FunnelSegment,
   type FunnelStatus,
@@ -11,6 +12,7 @@ import {
   TASHKENT_OFFSET_MS,
   TEMPLATE_DAYS,
   type TemplateKind,
+  type TemplateTimingMode,
 } from "@funnel/shared";
 
 export const MINUTE_MS = 60_000;
@@ -27,6 +29,7 @@ export type ScheduleTemplate = {
   id: number;
   day: number;
   position: number;
+  timingMode?: TemplateTimingMode;
   timingValue: number;
   kind: TemplateKind;
   atExpiry: boolean;
@@ -42,7 +45,10 @@ export type SendUsage = { today: number; runToday: number; runTotal: number };
 export type PlanItem<T extends ScheduleTemplate = ScheduleTemplate> = {
   template: T;
   sendAt: Date;
+  slot: string;
 };
+
+export type PlannedSend<T extends ScheduleTemplate = ScheduleTemplate> = PlanItem<T>;
 
 export function tashkentDayStart(date: Date): Date {
   const local = date.getTime() + TASHKENT_OFFSET_MS;
@@ -65,6 +71,11 @@ function nightMorningOf(date: Date): number | null {
   return null;
 }
 
+export function shiftOutOfNight(date: Date): Date {
+  const morning = nightMorningOf(date);
+  return morning === null ? date : new Date(morning + NIGHT.end * MINUTE_MS);
+}
+
 export function linkExpiryFor(givenAt: Date, ttlHours: number): Date {
   const raw = new Date(givenAt.getTime() + ttlHours * HOUR_MS);
   const morning = nightMorningOf(raw);
@@ -85,39 +96,121 @@ function compareItems<T extends ScheduleTemplate>(a: PlanItem<T>, b: PlanItem<T>
   );
 }
 
-export function triggerSendAt(template: ScheduleTemplate, windowStart: Date): Date {
-  if (template.atExpiry) return windowStart;
-  const start = windowStart.getTime();
+export function clockSendInWindow(minuteOfDay: number, afterAt: Date): Date {
+  const start = afterAt.getTime();
   const minuteStart = start - (((start % MINUTE_MS) + MINUTE_MS) % MINUTE_MS);
-  const ahead = (template.timingValue - tashkentMinuteOfDay(windowStart) + MINUTES_PER_DAY) % MINUTES_PER_DAY;
+  const ahead = (minuteOfDay - tashkentMinuteOfDay(afterAt) + MINUTES_PER_DAY) % MINUTES_PER_DAY;
   const candidate = minuteStart + ahead * MINUTE_MS;
   return new Date(candidate < start ? candidate + DAY_MS : candidate);
 }
 
-function linkChain<T extends ScheduleTemplate>(templates: T[], anchorAt: Date, grant: FunnelGrant | null): PlanItem<T>[] {
+export function triggerSendAt(template: ScheduleTemplate, windowStart: Date): Date {
+  return template.atExpiry ? windowStart : clockSendInWindow(template.timingValue, windowStart);
+}
+
+export function cycleForRun(
+  run: { segment: FunnelSegment; enteredAt: Date; grant?: FunnelGrant | null },
+  now: Date,
+  loop: boolean,
+): { cycleIndex: number; slot: string } {
+  if (!loop) return { cycleIndex: 0, slot: "" };
+  if (linkBoundSegments.includes(run.segment)) {
+    const grant = run.grant ?? null;
+    if (!grant?.expiresAt || now.getTime() < grant.expiresAt.getTime()) return { cycleIndex: 0, slot: "" };
+    const rawDay = funnelDayAt(grant, now);
+    if (rawDay <= TEMPLATE_DAYS) return { cycleIndex: 0, slot: "" };
+    const cycleIndex = Math.floor((rawDay - 1) / TEMPLATE_DAYS);
+    return { cycleIndex, slot: String(cycleIndex) };
+  }
+  const firstDay = tashkentDayStart(run.enteredAt);
+  const elapsedDays = Math.floor((tashkentDayStart(now).getTime() - firstDay.getTime()) / DAY_MS);
+  const cycleIndex = elapsedDays >= TEMPLATE_DAYS ? Math.floor(elapsedDays / TEMPLATE_DAYS) : 0;
+  return { cycleIndex, slot: cycleIndex === 0 ? "" : String(cycleIndex) };
+}
+
+function linkChain<T extends ScheduleTemplate>(
+  segment: FunnelSegment,
+  templates: T[],
+  anchorAt: Date,
+  grant: FunnelGrant | null,
+  now: Date,
+  nightRestriction: boolean,
+  loop: boolean,
+): PlanItem<T>[] {
+  const applyNight = (date: Date) => (nightRestriction ? shiftOutOfNight(date) : date);
+  const { cycleIndex, slot } = cycleForRun({ segment, enteredAt: anchorAt, grant }, now, loop);
+  if (cycleIndex >= 1 && grant?.expiresAt) {
+    const cycleDay1Start = new Date(grant.expiresAt.getTime() + (cycleIndex * TEMPLATE_DAYS - grant.day) * DAY_MS);
+    const cycleDay1End = new Date(cycleDay1Start.getTime() + DAY_MS);
+    const reminders = templates
+      .filter((template) => template.kind === "reminder" && template.day === 1)
+      .map((template) => {
+        const mode = template.timingMode ?? defaultTimingModeFor(segment, template.day, template.kind);
+        const rawSendAt =
+          mode === "clock"
+            ? clockSendInWindow(template.timingValue, cycleDay1Start)
+            : new Date(cycleDay1Start.getTime() + template.timingValue * MINUTE_MS);
+        return { template, sendAt: applyNight(rawSendAt), slot };
+      })
+      .filter((item) => item.sendAt.getTime() < cycleDay1End.getTime());
+    const triggers = templates
+      .filter((template) => template.kind === "trigger" && template.day > 1 && template.day <= TEMPLATE_DAYS)
+      .map((template) => ({
+        template,
+        sendAt: applyNight(triggerSendAt(template, new Date(cycleDay1End.getTime() + (template.day - 2) * DAY_MS))),
+        slot,
+      }));
+    return [...reminders, ...triggers];
+  }
+
   const day = grant?.day ?? 1;
   const expiresAt = grant?.expiresAt ?? null;
   const reminders = templates
     .filter((template) => template.kind === "reminder" && template.day === day)
-    .map((template) => ({ template, sendAt: new Date(anchorAt.getTime() + template.timingValue * MINUTE_MS) }))
+    .map((template) => {
+      const mode = template.timingMode ?? defaultTimingModeFor(segment, template.day, template.kind);
+      const rawSendAt =
+        mode === "clock"
+          ? clockSendInWindow(template.timingValue, anchorAt)
+          : new Date(anchorAt.getTime() + template.timingValue * MINUTE_MS);
+      return { template, sendAt: applyNight(rawSendAt), slot: "" };
+    })
     .filter((item) => !expiresAt || item.sendAt.getTime() < expiresAt.getTime());
   if (!expiresAt) return reminders;
   const triggers = templates
     .filter((template) => template.kind === "trigger" && template.day > day && template.day <= TEMPLATE_DAYS)
     .map((template) => ({
       template,
-      sendAt: triggerSendAt(template, new Date(expiresAt.getTime() + (template.day - day - 1) * DAY_MS)),
+      sendAt: applyNight(triggerSendAt(template, new Date(expiresAt.getTime() + (template.day - day - 1) * DAY_MS))),
+      slot: "",
     }));
   return [...reminders, ...triggers];
 }
 
-function trackChain<T extends ScheduleTemplate>(templates: T[], enteredAt: Date, anchorAt: Date): PlanItem<T>[] {
-  const firstDay = tashkentDayStart(enteredAt).getTime();
+function trackChain<T extends ScheduleTemplate>(
+  segment: FunnelSegment,
+  templates: T[],
+  enteredAt: Date,
+  anchorAt: Date,
+  now: Date,
+  nightRestriction: boolean,
+  loop: boolean,
+): PlanItem<T>[] {
+  const applyNight = (date: Date) => (nightRestriction ? shiftOutOfNight(date) : date);
+  const { cycleIndex, slot } = cycleForRun({ segment, enteredAt }, now, loop);
+  const firstDay = tashkentDayStart(enteredAt);
+  const cycleAnchorAt =
+    cycleIndex === 0 ? anchorAt : new Date(firstDay.getTime() + cycleIndex * TEMPLATE_DAYS * DAY_MS);
+  const cycleFirstDay = cycleIndex === 0 ? firstDay : tashkentDayStart(cycleAnchorAt);
   return templates.map((template) => {
-    const offset = template.timingValue * MINUTE_MS;
-    const sendAt =
-      template.day <= 1 ? anchorAt.getTime() + offset : firstDay + (template.day - 1) * DAY_MS + offset;
-    return { template, sendAt: new Date(sendAt) };
+    const mode = template.timingMode ?? defaultTimingModeFor(segment, template.day, template.kind);
+    const rawSendAt =
+      mode === "relative"
+        ? new Date(cycleAnchorAt.getTime() + (template.day - 1) * DAY_MS + template.timingValue * MINUTE_MS)
+        : template.day <= 1
+          ? clockSendInWindow(template.timingValue, cycleAnchorAt)
+          : new Date(cycleFirstDay.getTime() + (template.day - 1) * DAY_MS + template.timingValue * MINUTE_MS);
+    return { template, sendAt: applyNight(rawSendAt), slot };
   });
 }
 
@@ -128,14 +221,23 @@ export type ChainRun = {
   watch?: WatchSnapshot | null;
   grant?: FunnelGrant | null;
   lastAdminChatAt?: Date | null;
+  nightRestriction?: boolean;
+  loop?: boolean;
+  now?: Date;
 };
 
-export function planChain<T extends ScheduleTemplate>(templates: T[], run: ChainRun): PlanItem<T>[] {
+export function planChain<T extends ScheduleTemplate>(
+  templates: T[],
+  run: ChainRun,
+  now = run.now ?? new Date(),
+): PlanItem<T>[] {
   const eligible = run.status === undefined ? templates : templatesForStatus(templates, run.status);
   const anchorAt = chainAnchor(run, run.watch ?? null);
+  const nightRestriction = run.nightRestriction ?? false;
+  const loop = run.loop ?? false;
   const items = linkBoundSegments.includes(run.segment)
-    ? linkChain(eligible, anchorAt, run.grant ?? null)
-    : trackChain(eligible, run.enteredAt, anchorAt);
+    ? linkChain(run.segment, eligible, anchorAt, run.grant ?? null, now, nightRestriction, loop)
+    : trackChain(run.segment, eligible, run.enteredAt, anchorAt, now, nightRestriction, loop);
   return items.sort(compareItems);
 }
 

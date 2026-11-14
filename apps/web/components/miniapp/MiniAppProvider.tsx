@@ -18,7 +18,14 @@ type LoadState =
   | { type: "error"; initData: string }
   | { type: "ready"; initData: string; session: SessionResponse };
 
+type MiniAppStateContextValue = {
+  state: LoadState;
+  retry: (initData: string) => void;
+  setSession: (session: SessionResponse) => void;
+};
+
 export const MiniAppContext = createContext<MiniAppContextValue | null>(null);
+const MiniAppStateContext = createContext<MiniAppStateContextValue | null>(null);
 
 export function useMiniApp() {
   const value = useContext(MiniAppContext);
@@ -59,9 +66,28 @@ export function MiniAppProvider({ children }: { children: React.ReactNode }) {
     setState((current) => (current.type === "ready" ? { ...current, session } : current));
   }, []);
 
+  const retry = useCallback(
+    (initData: string) => {
+      void load(initData);
+    },
+    [load]
+  );
+
+  return (
+    <MiniAppStateContext.Provider value={{ state, retry, setSession }}>
+      {children}
+    </MiniAppStateContext.Provider>
+  );
+}
+
+export function MiniAppGate({ children }: { children: React.ReactNode }) {
+  const context = useContext(MiniAppStateContext);
+  if (!context) throw new Error("MiniAppGate must be used inside MiniAppProvider");
+  const { state, retry, setSession } = context;
+
   if (state.type === "loading") return <LoadingScreen />;
   if (state.type === "no_telegram") return <OpenInTelegramScreen />;
-  if (state.type === "error") return <ErrorScreen onRetry={() => load(state.initData)} />;
+  if (state.type === "error") return <ErrorScreen onRetry={() => retry(state.initData)} />;
 
   return (
     <MiniAppContext.Provider value={{ initData: state.initData, session: state.session, setSession }}>

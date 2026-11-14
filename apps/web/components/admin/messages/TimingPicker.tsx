@@ -1,10 +1,10 @@
 "use client";
 
-import type { TimingError } from "@funnel/shared";
+import type { TemplateTimingMode, TimingError } from "@funnel/shared";
 import { Field, Input } from "@/components/admin/ui/Field";
 import { Segmented } from "@/components/admin/ui/Segmented";
 import { TimePicker } from "@/components/admin/ui/TimePicker";
-import { relativeAnchor, timingMode, timingSummary, type TimingSubject } from "@/lib/admin/messageTiming";
+import { defaultMinuteFor, relativeAnchor, timingMode, timingSummary, type TimingSubject } from "@/lib/admin/messageTiming";
 import { adminUz } from "@/lib/i18n/admin";
 
 const copy = adminUz.messages.editor;
@@ -16,7 +16,7 @@ function clamp(raw: string, max: number) {
 type TimingPickerProps = {
   subject: TimingSubject;
   minute: number;
-  onChange: (values: { minute?: number; atExpiry?: boolean }) => void;
+  onChange: (values: { minute?: number; atExpiry?: boolean; timingMode?: TemplateTimingMode }) => void;
   error: TimingError | null;
 };
 
@@ -36,15 +36,31 @@ export function TimingPicker({ subject, minute, onChange, error }: TimingPickerP
 
   return (
     <div className="flex flex-col gap-3">
-      {isTrigger && (
+      {isTrigger ? (
         <Segmented
           label={copy.triggerTiming.label}
           fill
           value={subject.atExpiry ? "expiry" : "clock"}
-          onChange={(next) => onChange({ atExpiry: next === "expiry" })}
+          onChange={(next) => onChange({ atExpiry: next === "expiry", timingMode: "clock" })}
           items={[
             { value: "expiry", label: copy.triggerTiming.expiry },
             { value: "clock", label: copy.triggerTiming.clock },
+          ]}
+        />
+      ) : (
+        <Segmented
+          label={copy.timingMode.label}
+          fill
+          value={mode === "clock" ? "clock" : "relative"}
+          onChange={(next) =>
+            onChange({
+              timingMode: next,
+              minute: defaultMinuteFor({ ...subject, timingMode: next }),
+            })
+          }
+          items={[
+            { value: "relative", label: copy.timingMode.relative },
+            { value: "clock", label: copy.timingMode.clock },
           ]}
         />
       )}

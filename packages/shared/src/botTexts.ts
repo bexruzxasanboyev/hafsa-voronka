@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { type SanitizeError, sanitizeTelegramHtml, visibleLength } from "./messages";
+import { autoDeleteMinutesSchema, type SanitizeError, sanitizeTelegramHtml, visibleLength } from "./messages";
 
 export const BOT_TEXT_LIMITS = {
   message: 4096,
@@ -134,6 +134,8 @@ export const botTextItemSchema = z.object({
   defaultText: z.string(),
   text: z.string().nullable(),
   media: z.object({ type: z.enum(["photo", "video"]) }).nullable(),
+  autoDeleteMinutes: autoDeleteMinutesSchema,
+  keepForever: z.boolean(),
   updatedAt: z.string().nullable(),
 });
 
@@ -148,6 +150,8 @@ export type BotTextsResponse = z.infer<typeof botTextsResponseSchema>;
 
 export const botTextUpdateSchema = z.object({
   text: z.string().max(BOT_TEXT_LIMITS.message * 2),
+  autoDeleteMinutes: autoDeleteMinutesSchema.optional(),
+  keepForever: z.boolean().optional(),
 });
 
 export type BotTextUpdate = z.infer<typeof botTextUpdateSchema>;

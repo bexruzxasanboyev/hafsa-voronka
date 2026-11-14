@@ -4,9 +4,13 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useState } from "react";
 import {
+  DEFAULT_NIGHT_RESTRICTION_ENABLED,
+  DEFAULT_SEGMENT_LOOPS,
+  defaultTimingModeFor,
   type FunnelSegment,
   funnelSegments,
   type MessageTemplate,
+  type SegmentLoops,
   type TemplateKind,
   TRIGGER_DEFAULT_BUTTON,
 } from "@funnel/shared";
@@ -46,11 +50,13 @@ function errorMessage(code: string | undefined) {
 
 function newMessagePreset(segment: FunnelSegment, day: number, kind: TemplateKind): MessagePreset {
   const atExpiry = kind === "trigger";
+  const timingMode = defaultTimingModeFor(segment, day, kind);
   return {
     day,
     kind,
     atExpiry,
-    minute: defaultMinuteFor({ segment, day, kind, atExpiry }),
+    timingMode,
+    minute: defaultMinuteFor({ segment, day, kind, atExpiry, timingMode }),
     buttons: kind === "trigger" ? [{ kind: "again", text: TRIGGER_DEFAULT_BUTTON }] : [],
   };
 }
@@ -66,6 +72,8 @@ function AdminMessagesContent() {
   const [notice, setNotice] = useState<string | null>(null);
   const [editing, setEditing] = useState<Editing>(null);
   const [linkTtlHours, setLinkTtlHours] = useState<number | null>(null);
+  const [nightRestrictionEnabled, setNightRestrictionEnabled] = useState(DEFAULT_NIGHT_RESTRICTION_ENABLED);
+  const [segmentLoops, setSegmentLoops] = useState<SegmentLoops>(DEFAULT_SEGMENT_LOOPS);
   const [shownStage, setShownStage] = useState(stage);
   const [day, setDay] = useState(1);
 
@@ -117,7 +125,10 @@ function AdminMessagesContent() {
       setFailed(anyFailed);
     });
     void fetchSettings().then((result) => {
-      if (active && result.ok) setLinkTtlHours(result.settings.linkTtlHours);
+      if (!active || !result.ok) return;
+      setLinkTtlHours(result.settings.linkTtlHours);
+      setNightRestrictionEnabled(result.settings.nightRestrictionEnabled);
+      setSegmentLoops(result.settings.segmentLoops);
     });
     return () => {
       active = false;
@@ -226,6 +237,9 @@ function AdminMessagesContent() {
           items={loaded.items}
           videoMarks={loaded.videoMarks}
           day={day}
+          nightRestrictionEnabled={nightRestrictionEnabled}
+          segmentLoops={segmentLoops}
+          onSegmentLoopsChange={setSegmentLoops}
           onDayChange={setDay}
           onAddReminder={(targetDay) =>
             setEditing({ segment: stage, item: null, preset: newMessagePreset(stage, targetDay, "reminder") })

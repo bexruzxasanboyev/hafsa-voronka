@@ -43,4 +43,17 @@ describe.skipIf(!isolated.url)("Template seed", () => {
     const dayOne = rows.filter((row) => row.day === 1).map((row) => row.position);
     expect(dayOne).toEqual(dayOne.map((_, index) => index));
   });
+
+  it("seeds explicit timing modes and 1440m auto-delete", async () => {
+    const rows = await db().select().from(messageTemplates);
+    expect(rows.every((row) => row.autoDeleteMinutes === 1440 && !row.isPermanent)).toBe(true);
+    expect(rows.filter((row) => row.segment === "A").every((row) => row.timingMode === "relative")).toBe(true);
+    expect(rows.find((row) => row.segment === "B" && row.kind === "trigger")?.timingMode).toBe("clock");
+    expect(rows.filter((row) => row.segment === "C" && row.day === 1).every((row) => row.timingMode === "relative")).toBe(
+      true,
+    );
+    expect(rows.filter((row) => row.segment === "C" && row.day >= 2).every((row) => row.timingMode === "clock")).toBe(
+      true,
+    );
+  });
 });

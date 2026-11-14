@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { useState } from "react";
 import type { BotButtonKey, BotMessageKey, BotTextItem } from "@funnel/shared";
+import { AutoDeleteBadge } from "@/components/admin/AutoDeletePicker";
 import { RichTextView } from "@/components/admin/messages/MessagePreview";
 import { Badge } from "@/components/admin/ui/Badge";
 import { Button } from "@/components/admin/ui/Button";
@@ -23,7 +24,7 @@ const copy = adminUz.botTexts;
 const placeholderSamples = copy.placeholderLabels;
 
 function isEdited(item: BotTextItem) {
-  return item.text !== null || item.media !== null;
+  return item.text !== null || item.media !== null || item.autoDeleteMinutes !== null || item.keepForever;
 }
 
 export function EditBadge({ item }: { item: BotTextItem }) {
@@ -143,7 +144,7 @@ function BotBubble({
       </div>
       {inline.length > 0 && (
         <div className="ml-1.5 flex flex-col gap-1">
-          {inline.map(button => {
+          {inline.map((button) => {
             const buttonItem = byKey.get(button.key);
             return buttonItem ? (
               <ButtonChip
@@ -198,8 +199,8 @@ function MessageCard({
   const item = byKey.get(card.key);
   if (!item) return null;
   const { label, when } = copy.items[card.key];
-  const inline = card.buttons.filter(button => button.placement === "inline");
-  const reply = card.buttons.filter(button => button.placement === "reply");
+  const inline = card.buttons.filter((button) => button.placement === "inline");
+  const reply = card.buttons.filter((button) => button.placement === "reply");
 
   return (
     <Card>
@@ -208,7 +209,12 @@ function MessageCard({
           <h2 className="m-0 text-[17px] font-semibold leading-snug text-siyoh">
             {label}
           </h2>
-          <EditBadge item={item} />
+          <div className="flex flex-wrap gap-1.5">
+            <EditBadge item={item} />
+            {(item.autoDeleteMinutes !== null || item.keepForever) && (
+              <AutoDeleteBadge minutes={item.autoDeleteMinutes} />
+            )}
+          </div>
         </div>
         <Button
           variant="secondary"
@@ -240,7 +246,7 @@ function MessageCard({
         {reply.length > 0 && (
           <div className="flex flex-col gap-1 bg-white/70 p-1.5">
             <div className="flex flex-wrap gap-1.5">
-              {reply.map(button => {
+              {reply.map((button) => {
                 const buttonItem = byKey.get(button.key);
                 return buttonItem ? (
                   <ButtonChip
@@ -272,11 +278,11 @@ export function BotChat({
   onEditMessage,
   onEditButton,
 }: BotChatProps) {
-  const byKey = new Map(items.map(item => [item.key, item]));
+  const byKey = new Map(items.map((item) => [item.key, item]));
 
   return (
     <div className="mx-auto flex w-full max-w-[640px] flex-col gap-4">
-      {scenarios[scenario].map(card => (
+      {scenarios[scenario].map((card) => (
         <MessageCard
           key={card.key}
           card={card}

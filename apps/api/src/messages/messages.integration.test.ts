@@ -182,12 +182,31 @@ describe.skipIf(!testDbUrl)("Message constructor", () => {
     expect(outside.status).toBe(422);
     expect(await outside.json()).toEqual({ error: "out_of_range" });
 
-    expect((await send("", "POST", { ...draft, day: 9 })).status).toBe(400);
+    expect((await send("", "POST", { ...draft, day: 31 })).status).toBe(400);
     expect(await list()).toEqual([]);
 
-    const night = await send("", "POST", { ...draft, day: 3, minute: 23 * 60 + 30 });
-    expect(night.status).toBe(201);
-    expect(await night.json()).toMatchObject({ day: 3, minute: 23 * 60 + 30 });
+    const day30 = await send("", "POST", { ...draft, day: 30, minute: 23 * 60 + 30 });
+    expect(day30.status).toBe(201);
+    expect(await day30.json()).toMatchObject({ day: 30, minute: 23 * 60 + 30 });
+  });
+
+  it("persists timingMode and autoDeleteMinutes and syncs isPermanent", async () => {
+    const created = await create({ day: 1, timingMode: "clock", autoDeleteMinutes: 180 });
+    expect(created).toMatchObject({ timingMode: "clock", autoDeleteMinutes: 180, isPermanent: false });
+
+    const perm = await create({ day: 2, timingMode: "relative", autoDeleteMinutes: null });
+    expect(perm).toMatchObject({ timingMode: "relative", autoDeleteMinutes: null, isPermanent: true });
+
+    const updated = await send(`/${created.id}`, "PUT", { ...draft, autoDeleteMinutes: null });
+    expect(updated.status).toBe(200);
+    expect(await updated.json()).toMatchObject({ autoDeleteMinutes: null, isPermanent: true });
+
+    const badTrigger = await send("", "POST", { ...draft, day: 2, kind: "trigger", timingMode: "relative" });
+    expect(badTrigger.status).toBe(422);
+    expect(await badTrigger.json()).toEqual({ error: "trigger_clock_only" });
+
+    expect((await send("", "POST", { ...draft, autoDeleteMinutes: 0 })).status).toBe(400);
+    expect((await send("", "POST", { ...draft, autoDeleteMinutes: 2871 })).status).toBe(400);
   });
 
   it("saves a stop-point filter in B and refuses it elsewhere", async () => {

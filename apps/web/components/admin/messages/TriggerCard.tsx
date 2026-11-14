@@ -2,7 +2,7 @@
 
 import { useId } from "react";
 import type { MessageTemplate } from "@funnel/shared";
-import { PermanentBadge } from "@/components/admin/messages/MessageCard";
+import { AutoDeleteBadge } from "@/components/admin/AutoDeletePicker";
 import { MessagePreview } from "@/components/admin/messages/MessagePreview";
 import { Badge } from "@/components/admin/ui/Badge";
 import { Button } from "@/components/admin/ui/Button";
@@ -47,7 +47,7 @@ export function TriggerCard({ triggers, onCreate, onEdit, onToggle }: TriggerCar
               <span className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
                 <Badge tone={trigger.isActive ? "success" : "neutral"}>{timingSummary(trigger)}</Badge>
                 {trigger.media && <Badge>{copy.mediaBadge[trigger.media.type]}</Badge>}
-                {trigger.isPermanent && <PermanentBadge />}
+                <AutoDeleteBadge minutes={trigger.autoDeleteMinutes} />
               </span>
               <Switch
                 checked={trigger.isActive}

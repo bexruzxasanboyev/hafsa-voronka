@@ -2,11 +2,25 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import type { Bot } from "grammy";
 import postgres from "postgres";
-import type { FunnelSegment, TemplateButton } from "@funnel/shared";
+import { defaultTimingModeFor, type FunnelSegment, type TemplateButton } from "@funnel/shared";
 import { closeDb, db } from "@/db";
 import { runMigrations } from "@/db/migrate";
-import { events, linkGrants, messageTemplates, segmentRuns, sentMessages, settings, users, type Video, watchProgress } from "@/db/schema";
+import {
+  botTexts,
+  events,
+  linkGrants,
+  messageTemplates,
+  segmentRuns,
+  sentMessages,
+  settings,
+  users,
+  type Video,
+  watchAppointments,
+  watchProgress,
+} from "@/db/schema";
 import { signInitData } from "@/telegram/initData";
+import { invalidateBotTexts } from "@/telegram/texts";
+import { invalidateSettings, SETTINGS_KEYS } from "@/settings/service";
 import { createTestVideo, ensureActiveTestVideo } from "@/test/videos";
 import { setTestEnv, TEST_BOT_TOKEN } from "@/test/env";
 
@@ -89,10 +103,15 @@ describe.skipIf(!testDbUrl)("Message dispatcher", () => {
     messageSeq = 1000;
     testIndex += 1;
     entry = new Date(Date.UTC(2027, 0, 5, 5, 0, 0) + testIndex * 40 * DAY);
+    await db().delete(watchAppointments);
     await db().delete(sentMessages);
     await db().delete(events);
     await db().delete(segmentRuns);
     await db().delete(messageTemplates);
+    await db().delete(botTexts);
+    invalidateBotTexts();
+    await db().delete(settings);
+    invalidateSettings();
     await db().delete(watchProgress);
     await db().update(users).set({ linkId: null });
     await db().delete(linkGrants);
@@ -138,15 +157,23 @@ describe.skipIf(!testDbUrl)("Message dispatcher", () => {
   }
 
   async function makeTemplate(overrides: Partial<typeof messageTemplates.$inferInsert> = {}) {
+    const segment = overrides.segment ?? "A";
+    const day = overrides.day ?? 1;
+    const kind = overrides.kind ?? "reminder";
+    const autoDeleteMinutes =
+      overrides.autoDeleteMinutes !== undefined ? overrides.autoDeleteMinutes : overrides.isPermanent ? null : 1440;
     const [template] = await db()
       .insert(messageTemplates)
       .values({
-        segment: "A",
-        day: 1,
+        segment,
+        day,
         position: 0,
         text: "Salom, <b>{ism}</b>!",
+        timingMode: overrides.timingMode ?? defaultTimingModeFor(segment, day, kind),
         timingValue: 60,
         ...overrides,
+        autoDeleteMinutes,
+        isPermanent: autoDeleteMinutes === null,
       })
       .returning();
     return template;
@@ -239,49 +266,53 @@ describe.skipIf(!testDbUrl)("Message dispatcher", () => {
     expect(await rows()).toHaveLength(0);
   });
 
-  it("sends one message per tick and deletes the previous one first", async () => {
-    await setup({ text: "Bir", position: 0 });
-    await makeTemplate({ text: "Ikki", position: 1 });
+  it("sends one message per tick without deleting previous messages", async () => {
+    await setup({ text: "Bir", position: 0, autoDeleteMinutes: 180 });
+    await makeTemplate({ text: "Ikki", position: 1, autoDeleteMinutes: 180 });
     await tick(at(60));
     expect(sends().map((call) => call.payload.text)).toEqual(["Bir"]);
     await tick(at(61));
-    expect(calls.map((call) => call.method)).toEqual(["sendMessage", "deleteMessage", "sendMessage"]);
-    expect(deletes()[0].payload).toMatchObject({ message_id: 1001 });
+    expect(calls.map((call) => call.method)).toEqual(["sendMessage", "sendMessage"]);
+    expect(deletes()).toHaveLength(0);
     expect(sends()[1].payload.text).toBe("Ikki");
     const [first, second] = await rows();
-    expect(first.deletedAt).toEqual(at(61));
+    expect(first.deletedAt).toBeNull();
+    expect(first.deleteAt).toEqual(at(60 + 180));
     expect(second.deletedAt).toBeNull();
+    expect(second.deleteAt).toEqual(at(61 + 180));
   });
 
-  it("keeps a permanent message when the next ones are sent and deletes only replaceable ones", async () => {
-    await setup({ text: "Bir", position: 0, timingValue: 60 });
-    await makeTemplate({ text: "Qiroat", position: 1, timingValue: 61, isPermanent: true });
-    await makeTemplate({ text: "Uch", position: 2, timingValue: 62 });
-    await makeTemplate({ text: "To'rt", position: 3, timingValue: 63 });
-    for (let minute = 60; minute <= 63; minute += 1) await tick(at(minute));
-    expect(sends().map((call) => call.payload.text)).toEqual(["Bir", "Qiroat", "Uch", "To'rt"]);
-    expect(deletes().map((call) => call.payload.message_id)).toEqual([1001, 1003]);
-    expect((await rows()).map((row) => row.deletedAt !== null)).toEqual([true, false, true, false]);
+  it("never deletes permanent messages with autoDeleteMinutes null", async () => {
+    await setup({ text: "Bir", position: 0, timingValue: 60, autoDeleteMinutes: 60 });
+    await makeTemplate({ text: "Qiroat", position: 1, timingValue: 61, autoDeleteMinutes: null });
+    await tick(at(60));
+    await tick(at(61));
+    await tick(at(120));
+    expect(sends().map((call) => call.payload.text)).toEqual(["Bir", "Qiroat"]);
+    expect(deletes().map((call) => call.payload.message_id)).toEqual([1001]);
+    const all = await rows();
+    expect(all.map((row) => [row.deletedAt !== null, row.deleteAt !== null])).toEqual([
+      [true, true],
+      [false, false],
+    ]);
   });
 
-  it("treats an already deleted message as deleted", async () => {
-    await setup({ position: 0 });
-    await makeTemplate({ position: 1 });
+  it("treats an already deleted message as deleted during auto-delete sweep", async () => {
+    await setup({ position: 0, autoDeleteMinutes: 60 });
     await tick(at(60));
     injections.push({ method: "deleteMessage", error_code: 400, description: "Bad Request: message to delete not found" });
-    await tick(at(61));
+    await tick(at(120));
     const [first] = await rows();
-    expect(first.deletedAt).toEqual(at(61));
+    expect(first.deletedAt).toEqual(at(120));
     expect(first.deleteError).toBeNull();
-    expect(sends()).toHaveLength(2);
   });
 
-  it("records other delete errors and still sends", async () => {
-    await setup({ position: 0 });
-    await makeTemplate({ position: 1 });
+  it("records other delete errors and still sends later messages", async () => {
+    await setup({ position: 0, autoDeleteMinutes: 60 });
+    await makeTemplate({ position: 1, timingValue: 120 });
     await tick(at(60));
     injections.push({ method: "deleteMessage", error_code: 400, description: "Bad Request: can't be deleted" });
-    await tick(at(61));
+    await tick(at(120));
     const [first] = await rows();
     expect(first.deletedAt).toBeNull();
     expect(first.deleteError).toContain("can't be deleted");
@@ -318,7 +349,7 @@ describe.skipIf(!testDbUrl)("Message dispatcher", () => {
     expect(await rows()).toHaveLength(0);
   });
 
-  it("sends the first message of the new segment and deletes the old one", async () => {
+  it("sends the first message of the new segment without deleting the old one", async () => {
     const user = await makeUser();
     const runA = await openRun(user.id, "A");
     await makeTemplate({ segment: "A", text: "A1", position: 0 });
@@ -333,7 +364,7 @@ describe.skipIf(!testDbUrl)("Message dispatcher", () => {
     expect(sends()).toHaveLength(1);
 
     await tick(at(161));
-    expect(calls.map((call) => call.method)).toEqual(["sendMessage", "deleteMessage", "sendMessage"]);
+    expect(calls.map((call) => call.method)).toEqual(["sendMessage", "sendMessage"]);
     expect(sends().map((call) => call.payload.text)).toEqual(["A1", "B1"]);
     await tick(at(300));
     expect(sends()).toHaveLength(2);
@@ -434,46 +465,59 @@ describe.skipIf(!testDbUrl)("Message dispatcher", () => {
     expect(sends()).toHaveLength(0);
   });
 
-  describe("48 hour sweep", () => {
+  describe("independent auto-delete", () => {
     const sentAt = () => at(60);
     const afterSend = (hours: number, extraMinutes = 0) => new Date(sentAt().getTime() + hours * HOUR + extraMinutes * MINUTE);
 
-    it("deletes a message at 47 hours when nothing is pending", async () => {
-      await setup();
+    it("deletes each message at its own deleteAt regardless of pending sends", async () => {
+      await setup({ segment: "C", position: 0, autoDeleteMinutes: 120 });
+      await makeTemplate({ segment: "C", day: 3, position: 1, timingValue: 10 * 60 + 30, autoDeleteMinutes: 60 });
       await tick(sentAt());
-      await tick(afterSend(47));
+      await tick(at(60 + 119));
+      expect(deletes()).toHaveLength(0);
+      await tick(at(60 + 120));
       expect(deletes()).toHaveLength(1);
       expect(deletes()[0].payload).toMatchObject({ message_id: 1001 });
-      expect((await rows())[0].deletedAt).toEqual(afterSend(47));
-    });
-
-    it("keeps it while a send due soon will delete it", async () => {
-      await setup({ segment: "C", position: 0 });
-      await makeTemplate({ segment: "C", day: 3, position: 1, timingValue: 10 * 60 + 30 });
-      await tick(sentAt());
-      await tick(afterSend(47));
-      expect(deletes()).toHaveLength(0);
-      await tick(afterSend(47, 30));
-      expect(deletes()).toHaveLength(1);
-      expect(sends()).toHaveLength(2);
-      expect((await rows())[0].deletedAt).toEqual(afterSend(47, 30));
-    });
-
-    it("deletes unconditionally from 47h50m", async () => {
-      await setup({ segment: "C", position: 0 });
-      await makeTemplate({ segment: "C", day: 3, position: 1, timingValue: 10 * 60 + 58 });
-      await tick(sentAt());
-      await tick(afterSend(47, 55));
-      expect(deletes()).toHaveLength(1);
-      expect((await rows())[0].deletedAt).toEqual(afterSend(47, 55));
+      expect((await rows())[0].deletedAt).toEqual(at(60 + 120));
     });
 
     it("marks messages older than 48 hours without calling the API", async () => {
-      await setup();
+      await setup({ autoDeleteMinutes: 1440 });
       await tick(sentAt());
       await tick(afterSend(49));
       expect(deletes()).toHaveLength(0);
       expect((await rows())[0].deleteError).toBe("too_old");
+    });
+
+    it("does not delete template messages on link expiry if their autoDeleteMinutes is later or null", async () => {
+      await linkedRunUser("A", at(24 * 60));
+      await makeTemplate({ segment: "A", text: "Perm", timingValue: 60, autoDeleteMinutes: null });
+      await makeTemplate({ segment: "A", text: "Timed", position: 1, timingValue: 120, autoDeleteMinutes: 2870 });
+      await tick(at(60));
+      await tick(at(120));
+      await tick(at(24 * 60 + 30));
+      expect(deletes()).toHaveLength(0);
+      const all = await rows();
+      expect(all.every((row) => row.deletedAt === null)).toBe(true);
+    });
+
+    it("sets deleteAt on system bot_text messages when configured", async () => {
+      await db().insert(botTexts).values({ key: "reopenNow", autoDeleteMinutes: 90, keepForever: false });
+      invalidateBotTexts();
+      const user = await makeUser({ linkExpiresAt: at(10) });
+      await openRun(user.id, "A");
+      await db().insert(watchAppointments).values({
+        userId: user.id,
+        purpose: "reopen",
+        chosenAt: at(20),
+      });
+      await tick(at(20));
+      const [sent] = await rows();
+      expect(sent.botTextKey).toBe("reopenNow");
+      expect(sent.deleteAt).toEqual(at(20 + 90));
+      await tick(at(20 + 90));
+      expect(deletes()).toHaveLength(1);
+      expect((await rows())[0].deletedAt).toEqual(at(20 + 90));
     });
   });
 
@@ -628,9 +672,7 @@ describe.skipIf(!testDbUrl)("Message dispatcher", () => {
     await tick(at(262));
 
     expect(sends().map((call) => call.payload.text)).toEqual(["A1", "B1", "C1"]);
-    expect(deletes().map((call) => call.payload.message_id)).toEqual([1001, 1002]);
-    const all = await rows();
-    expect(all.map((row) => row.deletedAt !== null)).toEqual([true, true, false]);
+    expect(deletes()).toHaveLength(0);
   });
 
   describe("segment B", () => {
@@ -789,6 +831,98 @@ describe.skipIf(!testDbUrl)("Message dispatcher", () => {
 
       await tick(at(60));
       expect(sends()).toHaveLength(0);
+    });
+  });
+
+  describe("night restriction, timingMode and 30-day cycle loop", () => {
+    it("respects the night restriction toggle and shifts due messages to 07:00 Tashkent", async () => {
+      await setup({ text: "Tunda", timingMode: "relative", timingValue: 13 * 60 + 30 });
+      await db().insert(settings).values({ key: SETTINGS_KEYS.nightRestrictionEnabled, value: "true" });
+      invalidateSettings();
+
+      await tick(at(13 * 60 + 30));
+      expect(sends()).toHaveLength(0);
+
+      await tick(at(21 * 60));
+      expect(sends().map((call) => call.payload.text)).toEqual(["Tunda"]);
+      expect((await rows())[0].dueAt).toEqual(at(21 * 60));
+    });
+
+    it("supports explicit clock mode on day-1 A reminders", async () => {
+      await setup({ text: "Soat 15:00", timingMode: "clock", timingValue: 15 * 60 });
+      await tick(at(4 * 60 + 59));
+      expect(sends()).toHaveLength(0);
+      await tick(at(5 * 60));
+      expect(sends().map((call) => call.payload.text)).toEqual(["Soat 15:00"]);
+    });
+
+    it("loops non-link segments from Day 30 to Day 1 with slot 1 and stops on segment move or purchase", async () => {
+      const { markPaid } = await import("@/funnel/channel");
+      const user = await makeUser({ offerWatchedAt: entry });
+      await openRun(user.id, "C", entry);
+      await makeTemplate({ segment: "C", day: 1, text: "C_D1", timingMode: "relative", timingValue: 60 });
+      await makeTemplate({ segment: "C", day: 30, text: "C_D30", timingMode: "clock", timingValue: 10 * 60 });
+
+      await tick(at(60));
+      await tick(at(29 * 24 * 60));
+      expect(sends().map((call) => call.payload.text)).toEqual(["C_D1", "C_D30"]);
+      expect((await rows()).map((row) => row.slot)).toEqual(["", ""]);
+
+      await tick(at(30 * 24 * 60 - 9 * 60));
+      expect(sends().map((call) => call.payload.text)).toEqual(["C_D1", "C_D30", "C_D1"]);
+      expect((await rows())[2].slot).toBe("1");
+
+      await markPaid(user.id, { id: 999 }, at(30 * 24 * 60));
+      await tick(at(60 * 24 * 60 - 9 * 60));
+      expect(sends()).toHaveLength(3);
+    });
+
+    it("loops link-bound segments after Day 30 when enabled and stops when loop is disabled", async () => {
+      const { syncSegment } = await import("@/funnel/segments");
+      const lesson = await createTestVideo({ duration: 1500, introEndSec: 300, courseStartSec: 900, priceSec: 1102 });
+      const user = await makeUser({ videoId: lesson.id, linkGivenAt: entry, linkExpiresAt: at(24 * 60) });
+      const [grant] = await db()
+        .insert(linkGrants)
+        .values({ userId: user.id, attempt: 1, day: 1, kind: "initial", givenAt: entry, expiresAt: at(24 * 60) })
+        .returning();
+      await db().update(users).set({ linkId: grant.id }).where(eq(users.id, user.id));
+      await openRun(user.id, "A", entry);
+
+      await makeTemplate({ segment: "A", day: 1, text: "A_D1", timingMode: "relative", timingValue: 60 });
+      await makeTemplate({ segment: "A", day: 2, kind: "trigger", text: "A_T2", timingMode: "clock", timingValue: 10 * 60 });
+
+      await tick(at(60));
+      await tick(at(24 * 60));
+      expect(sends().map((call) => call.payload.text)).toEqual(["A_D1", "A_T2"]);
+
+      const cycle1Day1 = at(30 * 24 * 60 + 60);
+      await tick(cycle1Day1);
+      expect(sends().map((call) => call.payload.text)).toEqual(["A_D1", "A_T2", "A_D1"]);
+      expect((await rows())[2].slot).toBe("1");
+
+      await db()
+        .insert(settings)
+        .values({
+          key: SETTINGS_KEYS.segmentLoops,
+          value: JSON.stringify({ A: false, B: true, C: true, E: true }),
+        });
+      invalidateSettings();
+      await tick(at(31 * 24 * 60));
+      expect(sends()).toHaveLength(3);
+
+      await db().insert(watchProgress).values({
+        userId: user.id,
+        maxPosition: 1200,
+        lastPosition: 1200,
+        startedAt: at(31 * 24 * 60 + 10),
+        lastBeatAt: at(31 * 24 * 60 + 10),
+      });
+      await syncSegment(user.id, at(31 * 24 * 60 + 10));
+      const runs = await db().select().from(segmentRuns).where(eq(segmentRuns.userId, user.id)).orderBy(segmentRuns.id);
+      expect(runs.map((run) => [run.segment, run.endReason])).toEqual([
+        ["A", "advanced"],
+        ["C", null],
+      ]);
     });
   });
 });
