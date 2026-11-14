@@ -17,6 +17,7 @@ import { resolveDateRange } from "@/admin/dates";
 import {
   getCampaignStats,
   getDailySeries,
+  getFilterOptions,
   getFunnelAndKpis,
   getHealthStats,
   getLeads,
@@ -26,6 +27,7 @@ import {
 import { clientIp } from "@/http/clientIp";
 import { consumeRateLimit } from "@/http/rateLimit";
 import { adminBotTextRoutes } from "@/routes/adminBotTexts";
+import { adminLinkRoutes } from "@/routes/adminLinks";
 import { adminVideoRoutes } from "@/routes/adminVideos";
 import { adminMessageRoutes } from "@/routes/adminMessages";
 import { adminReportRoutes } from "@/routes/adminReports";
@@ -36,6 +38,7 @@ export const adminRoutes = new Hono();
 adminRoutes.use("*", requireAdminConfig);
 
 adminRoutes.route("/bot-texts", adminBotTextRoutes);
+adminRoutes.route("/links", adminLinkRoutes);
 adminRoutes.route("/videos", adminVideoRoutes);
 adminRoutes.route("/messages", adminMessageRoutes);
 adminRoutes.route("/reports", adminReportRoutes);
@@ -91,12 +94,13 @@ adminRoutes.get("/stats", requireAdminAuth, async (c) => {
     campaign: query.data.campaign || undefined,
   };
 
-  const [funnelAndKpis, daily, campaigns, dropoff, health] = await Promise.all([
+  const [funnelAndKpis, daily, campaigns, dropoff, health, filterOptions] = await Promise.all([
     getFunnelAndKpis(filters),
     getDailySeries(filters),
     getCampaignStats(filters),
     getWatchDropoff(filters),
     getHealthStats(),
+    getFilterOptions(),
   ]);
 
   return c.json({
@@ -108,6 +112,7 @@ adminRoutes.get("/stats", requireAdminAuth, async (c) => {
     campaigns,
     dropoff,
     health,
+    filterOptions,
   });
 });
 

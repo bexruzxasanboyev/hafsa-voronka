@@ -1,8 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import {
   adminLeadsResponseSchema,
   adminStatsResponseSchema,
+  campaignLinkItemSchema,
+  campaignLinksResponseSchema,
 } from "@funnel/shared";
 import { closeDb, db } from "@/db";
 import { runMigrations } from "@/db/migrate";
@@ -12,6 +14,7 @@ import {
   users,
   watchProgress,
 } from "@/db/schema";
+import { upsertUser } from "@/funnel/users";
 import { isolatedDatabase } from "@/test/isolatedDb";
 import { ensureActiveTestVideo } from "@/test/videos";
 import { hashPassword } from "./auth";
@@ -459,5 +462,153 @@ describe.skipIf(!testDbUrl)("Admin Integration Tests", () => {
     expect(aliLine).toContain("@ali_valiyev");
     expect(aliLine).toContain("100%");
     expect(aliLine).toContain("Ha");
+  });
+
+  it("manages campaign links, direct-to-bot attribution, fallback conversionRate, and filterOptions", async () => {
+    const app = createApp();
+
+    const autoRes = await app.request("/admin/links", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        cookie: adminSessionCookie,
+      },
+      body: JSON.stringify({
+        utmSource: "tg",
+        utmCampaign: "auto_camp",
+        utmContent: "post_1",
+      }),
+    });
+    expect(autoRes.status).toBe(201);
+    const autoBody = (await autoRes.json()) as { item: unknown };
+    const autoItem = campaignLinkItemSchema.parse(autoBody.item);
+    expect(autoItem.code).toMatch(/^tg_auto_camp_post_1_[a-z0-9]{5}$/);
+    expect(autoItem.botUrl).toBe(`https://t.me/test_bot?start=c_${autoItem.code}`);
+    expect(autoItem.landingUrl).toBe(
+      "https://example.com/?utm_source=tg&utm_campaign=auto_camp&utm_content=post_1",
+    );
+
+    const customRes = await app.request("/admin/links", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        cookie: adminSessionCookie,
+      },
+      body: JSON.stringify({
+        utmSource: "tg",
+        utmCampaign: "ramazon_2026",
+        utmContent: "video_1",
+        code: "tg_ramazon",
+      }),
+    });
+    expect(customRes.status).toBe(201);
+    const customBody = (await customRes.json()) as { item: unknown };
+    const customItem = campaignLinkItemSchema.parse(customBody.item);
+    expect(customItem.code).toBe("tg_ramazon");
+    expect(customItem.botUrl).toBe("https://t.me/test_bot?start=c_tg_ramazon");
+    expect(customItem.landingUrl).toBe(
+      "https://example.com/?utm_source=tg&utm_campaign=ramazon_2026&utm_content=video_1",
+    );
+
+    const dupRes = await app.request("/admin/links", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        cookie: adminSessionCookie,
+      },
+      body: JSON.stringify({
+        utmSource: "tg",
+        utmCampaign: "ramazon_2026",
+        code: "tg_ramazon",
+      }),
+    });
+    expect(dupRes.status).toBe(409);
+    expect(await dupRes.json()).toEqual({ error: "code_taken" });
+
+    await ensureActiveTestVideo();
+    const may08 = new Date("2026-05-08T10:00:00.000Z");
+    const tgBase = Math.floor(Math.random() * 10000000) + 30000000;
+
+    const first = await upsertUser({ id: tgBase + 1, username: "tg_ads_user_1" }, "c_tg_ramazon");
+    const second = await upsertUser({ id: tgBase + 2, username: "tg_ads_user_2" }, "c_tg_ramazon");
+
+    await db()
+      .update(users)
+      .set({ registeredAt: may08, completedAt: may08, channelClickAt: may08, createdAt: may08 })
+      .where(eq(users.id, first.user.id));
+
+    await db()
+      .update(users)
+      .set({ registeredAt: may08, createdAt: may08 })
+      .where(eq(users.id, second.user.id));
+
+    await db().insert(events).values([
+      { type: "bot_start", userId: first.user.id, createdAt: may08 },
+      { type: "registered", userId: first.user.id, createdAt: may08 },
+      { type: "video_complete", userId: first.user.id, createdAt: may08 },
+      { type: "channel_click", userId: first.user.id, createdAt: may08 },
+      { type: "bot_start", userId: second.user.id, createdAt: may08 },
+      { type: "registered", userId: second.user.id, createdAt: may08 },
+    ]);
+
+    const listRes = await app.request("/admin/links", {
+      method: "GET",
+      headers: { cookie: adminSessionCookie },
+    });
+    expect(listRes.status).toBe(200);
+    const listBody = campaignLinksResponseSchema.parse(await listRes.json());
+    const ramazonLink = listBody.items.find((i) => i.code === "tg_ramazon");
+    expect(ramazonLink).toBeDefined();
+    expect(ramazonLink?.botStarts).toBe(2);
+    expect(ramazonLink?.registrations).toBe(2);
+
+    const statsRes = await app.request(
+      "/admin/stats?from=2026-05-08&to=2026-05-08&source=tg&campaign=ramazon_2026",
+      {
+        method: "GET",
+        headers: { cookie: adminSessionCookie },
+      },
+    );
+    expect(statsRes.status).toBe(200);
+    const stats = adminStatsResponseSchema.parse(await statsRes.json());
+    expect(stats.kpis).toEqual({
+      landingViews: 0,
+      botStarts: 2,
+      registrations: 2,
+      completions: 1,
+      channelClicks: 1,
+      conversionRate: 50,
+    });
+    expect(stats.campaigns).toEqual([
+      {
+        source: "tg",
+        campaign: "ramazon_2026",
+        content: "video_1",
+        botStarts: 2,
+        registrations: 2,
+        completions: 1,
+        completionRate: 50,
+        channelClicks: 1,
+      },
+    ]);
+    expect(stats.filterOptions.sources.slice(0, 3)).toEqual(["tg", "ig", "fb"]);
+    expect(stats.filterOptions.campaigns).toContainEqual({
+      source: "tg",
+      campaign: "ramazon_2026",
+    });
+
+    const delRes1 = await app.request(`/admin/links/${autoItem.code}`, {
+      method: "DELETE",
+      headers: { cookie: adminSessionCookie },
+    });
+    expect(delRes1.status).toBe(200);
+    expect(await delRes1.json()).toEqual({ ok: true });
+
+    const delRes2 = await app.request(`/admin/links/${autoItem.code}`, {
+      method: "DELETE",
+      headers: { cookie: adminSessionCookie },
+    });
+    expect(delRes2.status).toBe(404);
+    expect(await delRes2.json()).toEqual({ error: "not_found" });
   });
 });

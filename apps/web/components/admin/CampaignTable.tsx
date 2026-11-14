@@ -15,6 +15,7 @@ const columns: StatColumn<CampaignStat>[] = [
   { key: "content", label: copy.content, render: (row) => <span className="text-qalam">{dash(row.content)}</span> },
   { key: "botStarts", label: copy.botStarts, align: "right", render: (row) => row.botStarts },
   { key: "registrations", label: copy.registrations, align: "right", render: (row) => row.registrations },
+  { key: "completions", label: copy.completions, align: "right", render: (row) => row.completions },
   { key: "completionRate", label: copy.completionRate, align: "right", render: (row) => <span className="text-zumrad">{row.completionRate}%</span> },
   { key: "channelClicks", label: copy.channelClicks, align: "right", render: (row) => row.channelClicks },
 ];

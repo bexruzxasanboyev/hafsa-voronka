@@ -68,7 +68,7 @@ export function FlowFunnel({ title, subtitle, stages, bare = false, compact = fa
   if (stages.length === 0) return null;
 
   const max = Math.max(...stages.map((stage) => stage.count), 1);
-  const first = stages[0].count;
+  const first = stages.find((stage) => stage.count > 0)?.count ?? 0;
   const width = stages.length * COLUMN_WIDTH;
   const path = bandPath(stages.map((stage) => bandHeight(stage.count, max)));
 

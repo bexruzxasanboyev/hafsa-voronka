@@ -73,6 +73,18 @@ export const healthStatSchema = z.object({
 
 export type HealthStat = z.infer<typeof healthStatSchema>;
 
+export const statsFilterOptionsSchema = z.object({
+  sources: z.array(z.string()),
+  campaigns: z.array(
+    z.object({
+      source: z.string(),
+      campaign: z.string(),
+    }),
+  ),
+});
+
+export type StatsFilterOptions = z.infer<typeof statsFilterOptionsSchema>;
+
 export const adminStatsResponseSchema = z.object({
   from: z.string(),
   to: z.string(),
@@ -82,6 +94,7 @@ export const adminStatsResponseSchema = z.object({
   campaigns: z.array(campaignStatSchema),
   dropoff: z.array(dropoffStatSchema),
   health: healthStatSchema,
+  filterOptions: statsFilterOptionsSchema,
 });
 
 export type AdminStatsResponse = z.infer<typeof adminStatsResponseSchema>;
@@ -120,3 +133,36 @@ export const adminLeadsResponseSchema = z.object({
 });
 
 export type AdminLeadsResponse = z.infer<typeof adminLeadsResponseSchema>;
+
+export const campaignLinkCreateSchema = z.object({
+  utmSource: z.string().trim().min(1).max(100),
+  utmCampaign: z.string().trim().min(1).max(100),
+  utmContent: z.string().trim().max(100).optional(),
+  code: z
+    .string()
+    .trim()
+    .regex(/^[A-Za-z0-9_-]{1,62}$/)
+    .optional(),
+});
+
+export type CampaignLinkCreate = z.infer<typeof campaignLinkCreateSchema>;
+
+export const campaignLinkItemSchema = z.object({
+  code: z.string(),
+  utmSource: z.string(),
+  utmCampaign: z.string(),
+  utmContent: z.string().nullable(),
+  botUrl: z.string(),
+  landingUrl: z.string(),
+  botStarts: z.number(),
+  registrations: z.number(),
+  createdAt: z.string(),
+});
+
+export type CampaignLinkItem = z.infer<typeof campaignLinkItemSchema>;
+
+export const campaignLinksResponseSchema = z.object({
+  items: z.array(campaignLinkItemSchema),
+});
+
+export type CampaignLinksResponse = z.infer<typeof campaignLinksResponseSchema>;

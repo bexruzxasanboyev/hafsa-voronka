@@ -7,6 +7,7 @@ import type {
   DropoffStat,
   FunnelStep,
   LeadItem,
+  StatsFilterOptions,
 } from "@funnel/shared";
 import { db } from "@/db";
 import { watchedPercent } from "@/leads/card";
@@ -113,7 +114,8 @@ export async function getFunnelAndKpis(filters: QueryFilters): Promise<{
   const registrations = countMap.get("registered") ?? 0;
   const completions = countMap.get("video_complete") ?? 0;
   const channelClicks = countMap.get("channel_click") ?? 0;
-  const conversionRate = landingViews > 0 ? Math.round((channelClicks / landingViews) * 1000) / 10 : 0;
+  const conversionBase = landingViews > 0 ? landingViews : botStarts;
+  const conversionRate = conversionBase > 0 ? Math.round((channelClicks / conversionBase) * 1000) / 10 : 0;
 
   return {
     funnel,
@@ -280,6 +282,61 @@ export async function getHealthStats(): Promise<AdminStatsResponse["health"]> {
     sheetsFailures: Number(row?.sheets_failures) || 0,
     lastBotStartAt: row?.last_bot_start_at ?? null,
     lastEventAt: row?.last_event_at ?? null,
+  };
+}
+
+const CANONICAL_SOURCES = ["tg", "ig", "fb"];
+
+export async function getFilterOptions(): Promise<StatsFilterOptions> {
+  const [sourceRows, campaignRows] = await Promise.all([
+    db().execute<{ source: string }>(sql`
+      SELECT DISTINCT source
+      FROM (
+        SELECT u.utm_source AS source
+        FROM users u
+        WHERE ${leadUser()} AND coalesce(u.utm_source, '') <> ''
+        UNION
+        SELECT cl.utm->>'utm_source' AS source
+        FROM campaign_links cl
+        WHERE coalesce(cl.utm->>'utm_source', '') <> ''
+        UNION
+        SELECT e.meta->>'utm_source' AS source
+        FROM events e
+        WHERE e.type = 'landing_view' AND coalesce(e.meta->>'utm_source', '') <> ''
+      ) s
+    `),
+    db().execute<{ source: string; campaign: string }>(sql`
+      SELECT source, campaign
+      FROM (
+        SELECT coalesce(u.utm_source, '') AS source, u.utm_campaign AS campaign
+        FROM users u
+        WHERE ${leadUser()} AND coalesce(u.utm_campaign, '') <> ''
+        UNION
+        SELECT coalesce(cl.utm->>'utm_source', '') AS source, cl.utm->>'utm_campaign' AS campaign
+        FROM campaign_links cl
+        WHERE coalesce(cl.utm->>'utm_campaign', '') <> ''
+        UNION
+        SELECT coalesce(e.meta->>'utm_source', '') AS source, e.meta->>'utm_campaign' AS campaign
+        FROM events e
+        WHERE e.type = 'landing_view' AND coalesce(e.meta->>'utm_campaign', '') <> ''
+      ) c
+      WHERE campaign <> ''
+      ORDER BY campaign ASC, source ASC
+    `),
+  ]);
+
+  const canonicalSet = new Set(CANONICAL_SOURCES);
+  const otherSources = sourceRows
+    .map((r) => r.source)
+    .filter((s) => s && !canonicalSet.has(s))
+    .sort((a, b) => a.localeCompare(b));
+
+  return {
+    sources: [...CANONICAL_SOURCES, ...otherSources],
+    campaigns: campaignRows.map((r) => ({
+      source: r.source,
+      campaign: r.campaign,
+    })),
   };
 }
 

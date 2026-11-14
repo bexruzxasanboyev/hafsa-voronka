@@ -3,20 +3,24 @@
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { AdminStatsResponse } from "@funnel/shared";
+import { CampaignLinksSheet } from "@/components/admin/CampaignLinksSheet";
 import { CampaignTable } from "@/components/admin/CampaignTable";
 import { DailyChart } from "@/components/admin/DailyChart";
 import { DateRangeFilter } from "@/components/admin/DateRangeFilter";
 import { DropoffBars } from "@/components/admin/DropoffBars";
 import { FunnelChart } from "@/components/admin/FunnelChart";
 import { KpiCards } from "@/components/admin/KpiCards";
-import { buttonClass } from "@/components/admin/ui/Button";
-import { Field, Input } from "@/components/admin/ui/Field";
+import { Button, buttonClass } from "@/components/admin/ui/Button";
+import { Field } from "@/components/admin/ui/Field";
 import { Page, PageHeader } from "@/components/admin/ui/Page";
+import { Select } from "@/components/admin/ui/Select";
 import { ErrorState, LoadingState } from "@/components/admin/ui/States";
-import { DownloadIcon } from "@/components/icons";
+import { DownloadIcon, LinkIcon } from "@/components/icons";
 import { fetchAdminStats, getLeadsCsvUrl } from "@/lib/admin/api";
 import { addDays, formatDate, getTashkentToday } from "@/lib/admin/dates";
 import { adminUz } from "@/lib/i18n/admin";
+
+const ALL_FILTER = "__all__";
 
 function AdminDashboardContent() {
   const router = useRouter();
@@ -36,6 +40,15 @@ function AdminDashboardContent() {
   const [attempt, setAttempt] = useState(0);
   const [draftSource, setDraftSource] = useState(source);
   const [draftCampaign, setDraftCampaign] = useState(campaign);
+  const [linksOpen, setLinksOpen] = useState(false);
+
+  const urlFilterKey = `${source}\0${campaign}`;
+  const [prevUrlFilterKey, setPrevUrlFilterKey] = useState(urlFilterKey);
+  if (prevUrlFilterKey !== urlFilterKey) {
+    setPrevUrlFilterKey(urlFilterKey);
+    setDraftSource(source);
+    setDraftCampaign(campaign);
+  }
 
   useEffect(() => {
     let active = true;
@@ -109,13 +122,62 @@ function AdminDashboardContent() {
     </a>
   );
 
+  const rawSources = [...(stats?.filterOptions.sources ?? ["tg", "ig", "fb"]), source, draftSource].filter(Boolean);
+  const sourceOptions = [
+    { value: ALL_FILTER, label: adminUz.filters.allSources },
+    ...Array.from(new Set(rawSources)).map((s) => ({
+      value: s,
+      label: adminUz.filters.sourceNames[s] ?? s,
+    })),
+  ];
+
+  const rawCampaigns = [
+    ...(stats?.filterOptions.campaigns ?? [])
+      .filter((c) => !draftSource || c.source === draftSource)
+      .map((c) => c.campaign),
+    ...(!draftSource || draftSource === source ? [campaign] : []),
+    draftCampaign,
+  ].filter(Boolean);
+  const campaignOptions = [
+    { value: ALL_FILTER, label: adminUz.filters.allCampaigns },
+    ...Array.from(new Set(rawCampaigns)).map((c) => ({ value: c, label: c })),
+  ];
+
+  const handleSourceChange = (selected: string) => {
+    const nextSource = selected === ALL_FILTER ? "" : selected;
+    setDraftSource(nextSource);
+    if (
+      nextSource &&
+      draftCampaign &&
+      !(stats?.filterOptions.campaigns ?? []).some(
+        (c) => c.source === nextSource && c.campaign === draftCampaign,
+      )
+    ) {
+      setDraftCampaign("");
+    }
+  };
+
   const extra = (
     <>
-      <Field label={adminUz.filters.sourceLabel} className="lg:w-40">
-        {({ id }) => <Input id={id} value={draftSource} onChange={(e) => setDraftSource(e.target.value)} />}
+      <Field label={adminUz.filters.sourceLabel} className="lg:w-44">
+        {({ id }) => (
+          <Select
+            id={id}
+            value={draftSource || ALL_FILTER}
+            onValueChange={handleSourceChange}
+            options={sourceOptions}
+          />
+        )}
       </Field>
-      <Field label={adminUz.filters.campaignLabel} className="lg:w-44">
-        {({ id }) => <Input id={id} value={draftCampaign} onChange={(e) => setDraftCampaign(e.target.value)} />}
+      <Field label={adminUz.filters.campaignLabel} className="lg:w-52">
+        {({ id }) => (
+          <Select
+            id={id}
+            value={draftCampaign || ALL_FILTER}
+            onValueChange={(value) => setDraftCampaign(value === ALL_FILTER ? "" : value)}
+            options={campaignOptions}
+          />
+        )}
       </Field>
     </>
   );
@@ -133,7 +195,20 @@ function AdminDashboardContent() {
             {(source || campaign) && <span>{[source, campaign].filter(Boolean).join(" / ")}</span>}
           </span>
         }
-        actions={csvAction}
+        actions={
+          <>
+            <Button variant="secondary" icon={<LinkIcon className="h-4 w-4" />} onClick={() => setLinksOpen(true)}>
+              {adminUz.links.openButton}
+            </Button>
+            {csvAction}
+          </>
+        }
+      />
+
+      <CampaignLinksSheet
+        open={linksOpen}
+        onClose={() => setLinksOpen(false)}
+        onChanged={() => setAttempt((v) => v + 1)}
       />
 
       <DateRangeFilter

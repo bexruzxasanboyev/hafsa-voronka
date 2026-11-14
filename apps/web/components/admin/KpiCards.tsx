@@ -8,12 +8,18 @@ function formatNumber(num: number): string {
 }
 
 export function KpiCards({ kpis }: { kpis: KpiStats }) {
+  const directBotOnly = kpis.landingViews === 0 && kpis.botStarts > 0;
+
   const items = [
     { label: adminUz.kpis.landingViews, value: formatNumber(kpis.landingViews), note: adminUz.kpis.landingNote },
     { label: adminUz.kpis.botStarts, value: formatNumber(kpis.botStarts), note: adminUz.kpis.botNote },
     { label: adminUz.kpis.registrations, value: formatNumber(kpis.registrations), note: adminUz.kpis.registrationNote },
     { label: adminUz.kpis.completions, value: formatNumber(kpis.completions), note: adminUz.kpis.completionNote },
-    { label: adminUz.kpis.conversionRate, value: `${kpis.conversionRate}%`, note: adminUz.kpis.conversionNote },
+    {
+      label: directBotOnly ? adminUz.kpis.botConversionRate : adminUz.kpis.conversionRate,
+      value: `${kpis.conversionRate}%`,
+      note: directBotOnly ? adminUz.kpis.botConversionNote : adminUz.kpis.conversionNote,
+    },
   ];
 
   return (
