@@ -112,6 +112,13 @@ export const users = pgTable(
   channelClickAt: timestamp("channel_click_at", { withTimezone: true }),
   wroteAdminAt: timestamp("wrote_admin_at", { withTimezone: true }),
   wroteAdminBy: bigint("wrote_admin_by", { mode: "number" }),
+  lastAdminChatAt: timestamp("last_admin_chat_at", { withTimezone: true }),
+  paidAt: timestamp("paid_at", { withTimezone: true }),
+  paidBy: bigint("paid_by", { mode: "number" }),
+  lastUtmSource: text("last_utm_source"),
+  lastUtmCampaign: text("last_utm_campaign"),
+  lastUtmContent: text("last_utm_content"),
+  lastTouchAt: timestamp("last_touch_at", { withTimezone: true }),
   botBlocked: boolean("bot_blocked").default(false).notNull(),
   funnelEpoch: integer("funnel_epoch").default(0).notNull(),
   linkId: bigint("link_id", { mode: "number" }).references((): AnyPgColumn => linkGrants.id),
@@ -121,8 +128,30 @@ export const users = pgTable(
   (t) => [
     index("users_registered_at_idx").on(t.registeredAt),
     index("users_video_id_idx").on(t.videoId),
+    index("users_wrote_admin_at_idx").on(t.wroteAdminAt),
+    index("users_paid_at_idx").on(t.paidAt),
   ],
 );
+
+export const businessConnections = pgTable(
+  "business_connections",
+  {
+    id: text("id").primaryKey(),
+    userTelegramId: bigint("user_telegram_id", { mode: "number" }).notNull(),
+    userChatId: bigint("user_chat_id", { mode: "number" }).notNull(),
+    username: text("username"),
+    firstName: text("first_name"),
+    lastName: text("last_name"),
+    canReply: boolean("can_reply").default(false).notNull(),
+    isEnabled: boolean("is_enabled").default(true).notNull(),
+    isApproved: boolean("is_approved").default(false).notNull(),
+    connectedAt: timestamp("connected_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("business_connections_user_telegram_id_idx").on(t.userTelegramId)],
+);
+
+export type BusinessConnectionRow = typeof businessConnections.$inferSelect;
 
 export const linkGrants = pgTable(
   "link_grants",
@@ -386,7 +415,7 @@ export const messageTemplates = pgTable(
       .on(t.segment, t.day, t.position)
       .where(sql`${t.deletedAt} is null`),
     check("message_templates_day_range", sql`${t.day} between 1 and 7`),
-    check("message_templates_segment_values", sql`${t.segment} in ('A', 'B', 'C') or ${t.deletedAt} is not null`),
+    check("message_templates_segment_values", sql`${t.segment} in ('A', 'B', 'C', 'E') or ${t.deletedAt} is not null`),
     check("message_templates_timing_value_range", sql`${t.timingValue} between 0 and 1439`),
     uniqueIndex("message_templates_one_trigger_idx")
       .on(t.segment, t.day)
@@ -397,7 +426,7 @@ export const messageTemplates = pgTable(
     ),
     check(
       "message_templates_statuses_values",
-      sql`${t.statuses} is null or (cardinality(${t.statuses}) > 0 and ${t.statuses} <@ array['link_berildi', 'korishni_boshladi', 'dars_yarmida', 'sotuvda_toxtadi', 'narxni_kurdi', 'adminga_yozdi']::text[])`,
+      sql`${t.statuses} is null or (cardinality(${t.statuses}) > 0 and ${t.statuses} <@ array['link_berildi', 'korishni_boshladi', 'dars_yarmida', 'sotuvda_toxtadi', 'narxni_kurdi', 'adminga_yozdi', 'sotib_oldi']::text[])`,
     ),
     check("message_templates_media_pair", sql`(${t.mediaType} is null) = (${t.mediaFileId} is null)`),
   ],

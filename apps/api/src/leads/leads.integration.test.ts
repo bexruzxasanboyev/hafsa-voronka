@@ -332,7 +332,7 @@ describe.skipIf(!testDbUrl)("Landing leads", () => {
       return runs.filter((run) => run.endedAt === null);
     }
 
-    it("lets any member mark it without claiming, ends the run and keeps channel_click_at empty", async () => {
+    it("lets any member mark it without claiming, advances to stage E and keeps channel_click_at empty", async () => {
       const { applyLeadAction, leadActionReplies } = await import("./actions");
       const { user, lead } = await linkedLead();
       const ali = { id: 701, name: "Ali" };
@@ -342,10 +342,11 @@ describe.skipIf(!testDbUrl)("Landing leads", () => {
       const marked = await userRow(user.id);
       expect(marked.wroteAdminAt).not.toBeNull();
       expect(marked.wroteAdminBy).toBe(701);
+      expect(marked.lastAdminChatAt).toEqual(marked.wroteAdminAt);
       expect(marked.channelClickAt).toBeNull();
-      expect(await openRuns(user.id)).toHaveLength(0);
-      const [ended] = await db().select().from(segmentRuns).where(eq(segmentRuns.userId, user.id));
-      expect(ended.endReason).toBe("wrote_admin");
+      const runs = await db().select().from(segmentRuns).where(eq(segmentRuns.userId, user.id));
+      expect(runs.find((r) => r.segment === "A")?.endReason).toBe("advanced");
+      expect(runs.find((r) => r.segment === "E" && r.endedAt === null)).toBeDefined();
       const [refreshed] = await leadsFor(lead.visitorId!);
       expect(refreshed.notifyVersion).toBeGreaterThan(lead.notifyVersion);
       expect(refreshed.outcome).toBeNull();
@@ -381,7 +382,7 @@ describe.skipIf(!testDbUrl)("Landing leads", () => {
       });
     });
 
-    it("is set by a won outcome and stops the chain, but not by lost", async () => {
+    it("sets paid_at and wrote_admin_at and closes the run with bought on won, but not on lost", async () => {
       const { applyLeadAction } = await import("./actions");
       const ali = { id: 705, name: "Ali" };
 
@@ -391,12 +392,18 @@ describe.skipIf(!testDbUrl)("Landing leads", () => {
       const wonUser = await userRow(won.user.id);
       expect(wonUser.wroteAdminAt).not.toBeNull();
       expect(wonUser.wroteAdminBy).toBe(705);
+      expect(wonUser.paidAt).not.toBeNull();
+      expect(wonUser.paidBy).toBe(705);
       expect(await openRuns(won.user.id)).toHaveLength(0);
+      const [closed] = await db().select().from(segmentRuns).where(eq(segmentRuns.userId, won.user.id));
+      expect(closed.endReason).toBe("bought");
 
       const lost = await linkedLead();
       await applyLeadAction(lost.lead.id, "claim", ali);
       await applyLeadAction(lost.lead.id, "lost", ali);
-      expect((await userRow(lost.user.id)).wroteAdminAt).toBeNull();
+      const lostUser = await userRow(lost.user.id);
+      expect(lostUser.wroteAdminAt).toBeNull();
+      expect(lostUser.paidAt).toBeNull();
       expect(await openRuns(lost.user.id)).toHaveLength(1);
     });
 
@@ -414,7 +421,7 @@ describe.skipIf(!testDbUrl)("Landing leads", () => {
       expect(after.wroteAdminBy).toBe(706);
     });
 
-    it("records a click as both channel_click_at and wrote_admin_at without an actor", async () => {
+    it("records a click only as channel_click_at without setting wrote_admin_at or closing the run", async () => {
       const { recordChannelClick } = await import("@/funnel/channel");
       const { user } = await linkedLead();
       const at = new Date(Date.now() + 5_000);
@@ -422,9 +429,9 @@ describe.skipIf(!testDbUrl)("Landing leads", () => {
       await recordChannelClick(user, at);
       const after = await userRow(user.id);
       expect(after.channelClickAt).toEqual(at);
-      expect(after.wroteAdminAt).toEqual(at);
+      expect(after.wroteAdminAt).toBeNull();
       expect(after.wroteAdminBy).toBeNull();
-      expect(await openRuns(user.id)).toHaveLength(0);
+      expect(await openRuns(user.id)).toHaveLength(1);
     });
   });
 });

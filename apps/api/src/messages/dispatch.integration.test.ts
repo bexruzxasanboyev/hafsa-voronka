@@ -521,18 +521,19 @@ describe.skipIf(!testDbUrl)("Message dispatcher", () => {
       expect(unchanged.wroteAdminAt).toBeNull();
     });
 
-    it("treats an admin button click as writing to the admin", async () => {
+    it("records an admin button click as channel_click without marking wrote_admin_at", async () => {
       const { row, user, run } = await sendWithButtons();
       const res = await app.request(`/r/${row.clickToken}/0`);
       expect(res.status).toBe(302);
       expect(res.headers.get("location")?.startsWith("https://t.me/example")).toBe(true);
       const [after] = await db().select().from(users).where(eq(users.id, user.id));
       expect(after.channelClickAt).not.toBeNull();
-      expect(after.wroteAdminAt).not.toBeNull();
+      expect(after.wroteAdminAt).toBeNull();
       const channelEvents = await db().select().from(events).where(eq(events.type, "channel_click"));
       expect(channelEvents).toHaveLength(1);
-      const [closed] = await db().select().from(segmentRuns).where(eq(segmentRuns.id, run.id));
-      expect(closed.endReason).toBe("wrote_admin");
+      const [stillOpen] = await db().select().from(segmentRuns).where(eq(segmentRuns.id, run.id));
+      expect(stillOpen.endedAt).toBeNull();
+      expect(stillOpen.endReason).toBeNull();
     });
 
     it("rejects unknown tokens and indexes", async () => {
@@ -731,6 +732,63 @@ describe.skipIf(!testDbUrl)("Message dispatcher", () => {
       expect(sends()).toHaveLength(0);
       const [bRun] = await db().select().from(segmentRuns).where(eq(segmentRuns.userId, priced.user.id)).orderBy(segmentRuns.id);
       expect(bRun.endedAt).toEqual(at(6));
+    });
+  });
+
+  describe("segment E and purchase", () => {
+    it("moves C to E on markWroteAdmin and dispatches E reminders", async () => {
+      const { markWroteAdmin } = await import("@/funnel/channel");
+      const user = await makeUser({ offerWatchedAt: entry });
+      const runC = await openRun(user.id, "C");
+      await makeTemplate({ segment: "C", text: "C1", timingValue: 60 });
+      await makeTemplate({ segment: "E", text: "E1", timingValue: 60 });
+
+      await markWroteAdmin(user.id, { id: 700 }, at(10), { via: "business", businessConnectionId: "bc_1" });
+      const runs = await db().select().from(segmentRuns).where(eq(segmentRuns.userId, user.id)).orderBy(segmentRuns.id);
+      expect(runs).toHaveLength(2);
+      expect(runs[0]).toMatchObject({ id: runC.id, segment: "C", endReason: "advanced" });
+      expect(runs[1]).toMatchObject({ segment: "E", endedAt: null });
+
+      await tick(at(69));
+      expect(sends()).toHaveLength(0);
+      await tick(at(70));
+      expect(sends().map((call) => call.payload.text)).toEqual(["E1"]);
+    });
+
+    it("holds E sends during active admin chat and resumes 30 minutes after lastAdminChatAt", async () => {
+      const { touchAdminChat } = await import("@/funnel/channel");
+      const user = await makeUser({ wroteAdminAt: entry, lastAdminChatAt: entry });
+      await openRun(user.id, "E", entry);
+      await makeTemplate({ segment: "E", text: "E_quiet", timingValue: 15 });
+
+      await tick(at(15));
+      expect(sends()).toHaveLength(0);
+
+      await touchAdminChat(user.id, at(20));
+      await tick(at(35));
+      expect(sends()).toHaveLength(0);
+
+      await tick(at(49));
+      expect(sends()).toHaveLength(0);
+
+      await tick(at(50));
+      expect(sends().map((call) => call.payload.text)).toEqual(["E_quiet"]);
+    });
+
+    it("closes E with bought on markPaid and stops all further sends", async () => {
+      const { markPaid } = await import("@/funnel/channel");
+      const user = await makeUser({ wroteAdminAt: entry, lastAdminChatAt: entry });
+      const runE = await openRun(user.id, "E", entry);
+      await makeTemplate({ segment: "E", text: "E_before_buy", timingValue: 60 });
+
+      const paid = await markPaid(user.id, { id: 800 }, at(40));
+      expect(paid).toBe(true);
+      const [closed] = await db().select().from(segmentRuns).where(eq(segmentRuns.id, runE.id));
+      expect(closed.endedAt).toEqual(at(40));
+      expect(closed.endReason).toBe("bought");
+
+      await tick(at(60));
+      expect(sends()).toHaveLength(0);
     });
   });
 });

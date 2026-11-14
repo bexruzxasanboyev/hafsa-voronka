@@ -1,3 +1,4 @@
+import { BusinessAccountsCard } from "@/components/admin/BusinessAccountsCard";
 import { ChatCleanupCard } from "@/components/admin/ChatCleanupCard";
 import { LogoutButton } from "@/components/admin/LogoutButton";
 import { MessageCapsCard } from "@/components/admin/MessageCapsCard";
@@ -12,6 +13,7 @@ export default function AdminSettingsPage() {
       <SettingsCard />
       <ChatCleanupCard />
       <MessageCapsCard />
+      <BusinessAccountsCard />
       <div className="lg:hidden">
         <LogoutButton tone="sheet" />
       </div>

@@ -5,17 +5,19 @@ export const funnelStatuses = [
   "sotuvda_toxtadi",
   "narxni_kurdi",
   "adminga_yozdi",
+  "sotib_oldi",
 ] as const;
 
 export type FunnelStatus = (typeof funnelStatuses)[number];
 
-export const funnelSegments = ["A", "B", "C"] as const;
+export const funnelSegments = ["A", "B", "C", "E"] as const;
 
 export type FunnelSegment = (typeof funnelSegments)[number];
 
 export const segmentEndReasons = [
   "advanced",
   "wrote_admin",
+  "bought",
   "bot_blocked",
   "expired",
   "relinked",

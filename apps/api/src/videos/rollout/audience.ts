@@ -11,7 +11,7 @@ type Executor = Pick<ReturnType<typeof db>, "select" | "execute">;
 export function rolloutBucketSql(): SQL<RolloutAudience | null> {
   const status = funnelStatusSql();
   return sql<RolloutAudience | null>`case
-    when exists (select 1 from ${leads} where ${leads.userId} = ${users.id} and ${leads.outcome} = 'won') then 'bought'
+    when ${users.paidAt} is not null or exists (select 1 from ${leads} where ${leads.userId} = ${users.id} and ${leads.outcome} = 'won') then 'bought'
     when ${users.wroteAdminAt} is not null then 'wrote_admin'
     when ${status} = 'link_berildi' then 'not_opened'
     when ${status} in ('korishni_boshladi', 'dars_yarmida', 'sotuvda_toxtadi') then 'halfway'

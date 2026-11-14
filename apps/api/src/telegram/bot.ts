@@ -11,6 +11,7 @@ import type { LeadAction } from "@/leads/card";
 import { markBlockedByTelegramId } from "@/telegram/blocked";
 import { adminVideoComposer } from "@/telegram/admin-video/handlers";
 import { adminHomeComposer } from "@/telegram/adminHome";
+import { businessComposer } from "@/telegram/business";
 import { reminderComposer } from "@/telegram/reminders";
 import { watchAppUrl } from "@/telegram/watchUrl";
 import { logChatMessage, replaceBotReply } from "@/telegram/chatLog";
@@ -67,6 +68,8 @@ function createBot() {
     const result = await applyLeadAction(Number(ctx.match[2]), ctx.match[1] as LeadAction, actor);
     await ctx.answerCallbackQuery({ text: result.reply, show_alert: !result.ok });
   });
+
+  root.use(businessComposer);
 
   const bot = root.chatType("private");
 

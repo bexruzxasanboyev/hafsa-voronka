@@ -58,6 +58,7 @@ import { activeTemplateRows, toTemplate } from "./repo";
 import {
   CHAIN_MS,
   DAY_MS,
+  isChattingWithAdminNow,
   isWatchingNow,
   nextPendingDue,
   pickNext,
@@ -99,6 +100,7 @@ type Candidate = {
   linkId: number | null;
   linkExpiresAt: Date | null;
   linkDay: number | null;
+  lastAdminChatAt: Date | null;
   sentTemplateIds: number[];
   usage: SendUsage;
   status: FunnelStatus | null;
@@ -156,6 +158,8 @@ async function loadCandidates(now: Date, userId?: number): Promise<Candidate[]> 
       linkDay: sql<number | null>`(select ${linkGrants.day} from ${linkGrants} where ${linkGrants.id} = ${users.linkId})`,
       registeredAt: users.registeredAt,
       wroteAdminAt: users.wroteAdminAt,
+      lastAdminChatAt: users.lastAdminChatAt,
+      paidAt: users.paidAt,
       offerWatchedAt: users.offerWatchedAt,
       maxPosition: watchProgress.maxPosition,
       startedAt: watchProgress.startedAt,
@@ -179,7 +183,8 @@ async function loadCandidates(now: Date, userId?: number): Promise<Candidate[]> 
       and(
         isNull(segmentRuns.endedAt),
         eq(users.botBlocked, false),
-        isNull(users.wroteAdminAt),
+        isNull(users.paidAt),
+        or(eq(segmentRuns.segment, "E"), isNull(users.wroteAdminAt)),
         notAdminTelegramId(users.telegramId),
         chainAllowed,
         gt(segmentRuns.enteredAt, since),
@@ -196,6 +201,7 @@ async function loadCandidates(now: Date, userId?: number): Promise<Candidate[]> 
     linkId: row.linkId,
     linkExpiresAt: row.linkExpiresAt,
     linkDay: row.linkDay === null ? null : Number(row.linkDay),
+    lastAdminChatAt: row.lastAdminChatAt,
     sentTemplateIds: row.sentTemplateIds.map(Number),
     usage: { today: row.sentToday, runToday: row.runToday, runTotal: row.runTotal },
     status: statusFor(
@@ -310,7 +316,8 @@ async function sendOne(api: Api, pick: Pick, now: Date, pace: Pace): Promise<Sen
     select ${userId}, ${item.template.id}, (select link_id from users where id = ${userId}), ${runId}, ${item.sendAt.toISOString()}::timestamptz, ${nowIso}::timestamptz
     where exists (
         select 1 from segment_runs r join users u on u.id = r.user_id
-        where r.id = ${runId} and r.ended_at is null and u.bot_blocked = false and u.wrote_admin_at is null
+        where r.id = ${runId} and r.ended_at is null and u.bot_blocked = false
+          and u.paid_at is null and (r.segment = 'E' or u.wrote_admin_at is null)
           and not exists (select 1 from link_grants g where g.id = u.link_id and g.silent)
       )
       and exists (
@@ -452,6 +459,7 @@ function chainFor(candidate: Candidate, templates: MessageTemplateRow[]) {
     status: candidate.status,
     watch: candidate.watch,
     grant: { day: candidate.linkDay ?? 1, expiresAt: candidate.linkExpiresAt },
+    lastAdminChatAt: candidate.lastAdminChatAt,
   });
 }
 
@@ -470,7 +478,7 @@ async function sendDue(api: Api, now: Date, pace: Pace, candidates: Candidate[])
   const caps = await messageCaps();
   const picks: Pick[] = [];
   for (const candidate of candidates) {
-    if (isWatchingNow(candidate.watch, now)) continue;
+    if (isWatchingNow(candidate.watch, now) || isChattingWithAdminNow(candidate.lastAdminChatAt, now)) continue;
     const plan = chainFor(candidate, bySegment.get(candidate.segment) ?? []);
     const item = pickNext(plan, new Set(candidate.sentTemplateIds), now, candidate.usage, caps[candidate.segment]);
     if (item) picks.push({ candidate, item });
@@ -529,7 +537,9 @@ type AppointmentRow = {
 };
 
 function appointmentStillValid({ appointment, user, state, lastBeatAt }: AppointmentRow): boolean {
-  if (user.botBlocked || user.wroteAdminAt !== null || isAdminTelegramId(user.telegramId)) return false;
+  if (user.botBlocked || user.paidAt !== null || user.wroteAdminAt !== null || isAdminTelegramId(user.telegramId)) {
+    return false;
+  }
   if (appointment.purpose === "reopen") return state.closed;
   return !state.closed && !(lastBeatAt && lastBeatAt.getTime() > appointment.createdAt.getTime());
 }

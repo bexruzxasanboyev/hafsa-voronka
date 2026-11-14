@@ -1,7 +1,7 @@
 import { and, eq, isNull } from "drizzle-orm";
 import { db } from "@/db";
 import { leads } from "@/db/schema";
-import { markWroteAdmin } from "@/funnel/channel";
+import { markPaid, markWroteAdmin } from "@/funnel/channel";
 import { assigneeLabel, type LeadAction } from "./card";
 import { bumpLeadVersion, kickLeadNotifier } from "./notifier";
 
@@ -67,7 +67,7 @@ export async function applyLeadAction(leadId: number, action: LeadAction, actor:
 
   if (!updated) return { ok: false as const, reply: await explainRefusal(leadId, action, actor) };
 
-  if (action === "won" && updated.userId !== null) await markWroteAdmin(updated.userId, actor, now);
+  if (action === "won" && updated.userId !== null) await markPaid(updated.userId, actor, now);
   kickLeadNotifier();
   const reply = action === "claim" ? leadActionReplies.claimed : leadActionReplies[action];
   return { ok: true as const, reply };

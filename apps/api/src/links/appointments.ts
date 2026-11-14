@@ -16,7 +16,7 @@ export type LaterContext =
 export type ScheduleResult = "scheduled" | "unavailable" | "closed";
 
 export async function laterContextFor(executor: Reader, user: User, now: Date): Promise<LaterContext | null> {
-  if (user.registeredAt === null || user.wroteAdminAt !== null || user.botBlocked) return null;
+  if (user.registeredAt === null || user.paidAt !== null || user.wroteAdminAt !== null || user.botBlocked) return null;
   const state = await lessonState(executor, user, now);
   if (state.closed) return { purpose: "reopen", expiresAt: null };
   const live = user.linkExpiresAt !== null && user.linkExpiresAt.getTime() > now.getTime();

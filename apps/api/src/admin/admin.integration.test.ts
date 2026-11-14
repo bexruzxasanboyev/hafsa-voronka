@@ -316,6 +316,8 @@ describe.skipIf(!testDbUrl)("Admin Integration Tests", () => {
       registrations: 3,
       completions: 1,
       channelClicks: 1,
+      realChats: 0,
+      purchases: 0,
       conversionRate: 50,
     });
 
@@ -328,6 +330,8 @@ describe.skipIf(!testDbUrl)("Admin Integration Tests", () => {
       video_start: 2,
       video_complete: 1,
       channel_click: 1,
+      admin_chat: 0,
+      paid: 0,
     });
 
     const stepConv = Object.fromEntries(stats.funnel.map((s) => [s.step, s.conversionRate]));
@@ -338,6 +342,8 @@ describe.skipIf(!testDbUrl)("Admin Integration Tests", () => {
     expect(stepConv.video_start).toBe(66.7);
     expect(stepConv.video_complete).toBe(50);
     expect(stepConv.channel_click).toBe(100);
+    expect(stepConv.admin_chat).toBe(0);
+    expect(stepConv.paid).toBe(0);
 
     const may06Daily = stats.daily.find((d) => d.date === "2026-05-06");
     const may07Daily = stats.daily.find((d) => d.date === "2026-05-07");
@@ -361,6 +367,8 @@ describe.skipIf(!testDbUrl)("Admin Integration Tests", () => {
       completions: 1,
       completionRate: 100,
       channelClicks: 1,
+      realChats: 0,
+      purchases: 0,
     });
 
     expect(stats.health.sheetsBacklog).toBeGreaterThanOrEqual(2);
@@ -410,6 +418,8 @@ describe.skipIf(!testDbUrl)("Admin Integration Tests", () => {
     expect(leadsJson.leads[2].progressPercent).toBe(100);
     expect(leadsJson.leads[2].completed).toBe(true);
     expect(leadsJson.leads[2].channelClicked).toBe(true);
+    expect(leadsJson.leads[2].wroteAdmin).toBe(false);
+    expect(leadsJson.leads[2].paid).toBe(false);
 
     const video = await ensureActiveTestVideo();
     const extraUsersBase = Math.floor(Math.random() * 10000000) + 20000000;
@@ -451,7 +461,7 @@ describe.skipIf(!testDbUrl)("Admin Integration Tests", () => {
     const csvText = buf.toString("utf-8");
     const lines = csvText.replace(/^\uFEFF/, "").trim().split(/\r?\n/);
     expect(lines[0]).toBe(
-      "Ro'yxatdan o'tgan sana,Ism,Telefon,Username,Manba,Kampaniya,Ko'rish foizi,Tugatilgan,Adminga yozgan",
+      "Ro'yxatdan o'tgan sana,Ism,Telefon,Username,Manba,Kampaniya,Ko'rish foizi,Tugatilgan,Tugma bosgan,Haqiqiy yozgan,Sotib olgan",
     );
     expect(lines.length).toBe(54);
 
@@ -577,6 +587,8 @@ describe.skipIf(!testDbUrl)("Admin Integration Tests", () => {
       registrations: 2,
       completions: 1,
       channelClicks: 1,
+      realChats: 0,
+      purchases: 0,
       conversionRate: 50,
     });
     expect(stats.campaigns).toEqual([
@@ -589,6 +601,8 @@ describe.skipIf(!testDbUrl)("Admin Integration Tests", () => {
         completions: 1,
         completionRate: 50,
         channelClicks: 1,
+        realChats: 0,
+        purchases: 0,
       },
     ]);
     expect(stats.filterOptions.sources.slice(0, 3)).toEqual(["tg", "ig", "fb"]);
@@ -610,5 +624,179 @@ describe.skipIf(!testDbUrl)("Admin Integration Tests", () => {
     });
     expect(delRes2.status).toBe(404);
     expect(await delRes2.json()).toEqual({ error: "not_found" });
+  });
+
+  it("separates channelClicks, realChats, purchases, first/last-touch attribution, and lead flags", async () => {
+    const app = createApp();
+    const video = await ensureActiveTestVideo();
+    const baseTg = Math.floor(Math.random() * 10000000) + 40000000;
+
+    const priorDate = new Date("2026-05-25T10:00:00.000Z");
+    const inRangeDay1 = new Date("2026-06-02T10:00:00.000Z");
+    const inRangeDay2 = new Date("2026-06-03T10:00:00.000Z");
+
+    const [fbToTgUser] = await db()
+      .insert(users)
+      .values({
+        telegramId: baseTg + 1,
+        videoId: video.id,
+        name: "FB Then TG",
+        phone: "+998901010101",
+        username: "fb_tg_user",
+        utmSource: "fb",
+        utmCampaign: "fb_june",
+        utmContent: "reel_1",
+        lastUtmSource: "tg",
+        lastUtmCampaign: "tg_june",
+        lastUtmContent: "post_2",
+        lastTouchAt: inRangeDay1,
+        registeredAt: inRangeDay1,
+        channelClickAt: inRangeDay1,
+        wroteAdminAt: inRangeDay1,
+        paidAt: inRangeDay2,
+        createdAt: inRangeDay1,
+      })
+      .returning();
+
+    const [igClickOnlyUser] = await db()
+      .insert(users)
+      .values({
+        telegramId: baseTg + 2,
+        videoId: video.id,
+        name: "IG Click Only",
+        phone: "+998902020202",
+        utmSource: "insta_ads",
+        utmCampaign: "ig_june",
+        utmContent: "story_1",
+        registeredAt: inRangeDay1,
+        channelClickAt: inRangeDay1,
+        createdAt: inRangeDay1,
+      })
+      .returning();
+
+    const [organicEarlierUser] = await db()
+      .insert(users)
+      .values({
+        telegramId: baseTg + 3,
+        videoId: video.id,
+        name: "Organic Delayed",
+        phone: "+998903030303",
+        utmSource: null,
+        utmCampaign: null,
+        registeredAt: priorDate,
+        wroteAdminAt: inRangeDay2,
+        paidAt: inRangeDay2,
+        createdAt: priorDate,
+      })
+      .returning();
+
+    const [otherSourceUser] = await db()
+      .insert(users)
+      .values({
+        telegramId: baseTg + 4,
+        videoId: video.id,
+        name: "YouTube Lead",
+        phone: "+998904040404",
+        utmSource: "youtube",
+        utmCampaign: "yt_june",
+        registeredAt: inRangeDay2,
+        wroteAdminAt: inRangeDay2,
+        createdAt: inRangeDay2,
+      })
+      .returning();
+
+    await db().insert(events).values([
+      { type: "bot_start", userId: fbToTgUser.id, createdAt: inRangeDay1 },
+      { type: "registered", userId: fbToTgUser.id, createdAt: inRangeDay1 },
+      { type: "channel_click", userId: fbToTgUser.id, createdAt: inRangeDay1 },
+      { type: "bot_start", userId: igClickOnlyUser.id, createdAt: inRangeDay1 },
+      { type: "registered", userId: igClickOnlyUser.id, createdAt: inRangeDay1 },
+      { type: "channel_click", userId: igClickOnlyUser.id, createdAt: inRangeDay1 },
+      { type: "bot_start", userId: otherSourceUser.id, createdAt: inRangeDay2 },
+      { type: "registered", userId: otherSourceUser.id, createdAt: inRangeDay2 },
+    ]);
+
+    const statsRes = await app.request("/admin/stats?from=2026-06-01&to=2026-06-05", {
+      method: "GET",
+      headers: { cookie: adminSessionCookie },
+    });
+    expect(statsRes.status).toBe(200);
+    const stats = adminStatsResponseSchema.parse(await statsRes.json());
+
+    expect(stats.kpis).toEqual({
+      landingViews: 0,
+      botStarts: 3,
+      registrations: 3,
+      completions: 0,
+      channelClicks: 2,
+      realChats: 3,
+      purchases: 2,
+      conversionRate: 66.7,
+    });
+
+    const stepMap = Object.fromEntries(stats.funnel.map((s) => [s.step, s]));
+    expect(stepMap.channel_click).toMatchObject({ name: "Adminga tugma bosdi", count: 2 });
+    expect(stepMap.admin_chat).toMatchObject({ name: "Haqiqiy yozdi", count: 3, conversionRate: 150 });
+    expect(stepMap.paid).toMatchObject({ name: "Sotib oldi", count: 2, conversionRate: 66.7 });
+
+    const organicCampaign = stats.campaigns.find((c) => c.source === "" && c.campaign === "");
+    expect(organicCampaign).toEqual({
+      source: "",
+      campaign: "",
+      content: "",
+      botStarts: 0,
+      registrations: 0,
+      completions: 0,
+      completionRate: 0,
+      channelClicks: 0,
+      realChats: 1,
+      purchases: 1,
+    });
+
+    expect(stats.attribution.firstTouch).toEqual([
+      { network: "ig", registrations: 1, buttonClicks: 1, realChats: 0, purchases: 0 },
+      { network: "fb", registrations: 1, buttonClicks: 1, realChats: 1, purchases: 1 },
+      { network: "tg", registrations: 0, buttonClicks: 0, realChats: 0, purchases: 0 },
+      { network: "organic", registrations: 0, buttonClicks: 0, realChats: 1, purchases: 1 },
+      { network: "other", registrations: 1, buttonClicks: 0, realChats: 1, purchases: 0 },
+    ]);
+
+    expect(stats.attribution.lastTouch).toEqual([
+      { network: "ig", registrations: 1, buttonClicks: 1, realChats: 0, purchases: 0 },
+      { network: "fb", registrations: 0, buttonClicks: 0, realChats: 0, purchases: 0 },
+      { network: "tg", registrations: 1, buttonClicks: 1, realChats: 1, purchases: 1 },
+      { network: "organic", registrations: 0, buttonClicks: 0, realChats: 1, purchases: 1 },
+      { network: "other", registrations: 1, buttonClicks: 0, realChats: 1, purchases: 0 },
+    ]);
+
+    const leadsRes = await app.request("/admin/leads?from=2026-06-01&to=2026-06-05", {
+      method: "GET",
+      headers: { cookie: adminSessionCookie },
+    });
+    expect(leadsRes.status).toBe(200);
+    const leadsJson = adminLeadsResponseSchema.parse(await leadsRes.json());
+    const fbLead = leadsJson.leads.find((l) => l.id === fbToTgUser.id);
+    const igLead = leadsJson.leads.find((l) => l.id === igClickOnlyUser.id);
+    const ytLead = leadsJson.leads.find((l) => l.id === otherSourceUser.id);
+    expect(fbLead).toMatchObject({ channelClicked: true, wroteAdmin: true, paid: true });
+    expect(igLead).toMatchObject({ channelClicked: true, wroteAdmin: false, paid: false });
+    expect(ytLead).toMatchObject({ channelClicked: false, wroteAdmin: true, paid: false });
+    expect(leadsJson.leads.find((l) => l.id === organicEarlierUser.id)).toBeUndefined();
+
+    const csvRes = await app.request("/admin/leads.csv?from=2026-06-01&to=2026-06-05", {
+      method: "GET",
+      headers: { cookie: adminSessionCookie },
+    });
+    expect(csvRes.status).toBe(200);
+    const csvLines = (await csvRes.text()).replace(/^\uFEFF/, "").trim().split(/\r?\n/);
+    expect(csvLines[0]).toBe(
+      "Ro'yxatdan o'tgan sana,Ism,Telefon,Username,Manba,Kampaniya,Ko'rish foizi,Tugatilgan,Tugma bosgan,Haqiqiy yozgan,Sotib olgan",
+    );
+    const fbCsvLine = csvLines.find((l) => l.includes("FB Then TG"));
+    const igCsvLine = csvLines.find((l) => l.includes("IG Click Only"));
+    const ytCsvLine = csvLines.find((l) => l.includes("YouTube Lead"));
+    expect(fbCsvLine?.endsWith(",Ha,Ha,Ha")).toBe(true);
+    expect(igCsvLine?.endsWith(",Ha,Yo'q,Yo'q")).toBe(true);
+    expect(ytCsvLine?.endsWith(",Yo'q,Ha,Yo'q")).toBe(true);
   });
 });

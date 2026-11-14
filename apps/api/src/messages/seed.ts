@@ -188,6 +188,7 @@ export const seedTemplates: Record<FunnelSegment, SeedTemplate[]> = {
   A: segmentA,
   B: segmentB,
   C: segmentC,
+  E: [],
 };
 
 export function seedInputs(segment: FunnelSegment): MessageTemplateInput[] {
@@ -229,11 +230,12 @@ async function seedSegment(segment: FunnelSegment) {
         kind: input.kind,
       };
     });
+    if (rows.length === 0) return 0;
     await tx.insert(messageTemplates).values(rows);
     return rows.length;
   });
 }
 
 export async function seedStartingTemplates(): Promise<Record<FunnelSegment, number>> {
-  return { A: await seedSegment("A"), B: await seedSegment("B"), C: await seedSegment("C") };
+  return { A: await seedSegment("A"), B: await seedSegment("B"), C: await seedSegment("C"), E: await seedSegment("E") };
 }

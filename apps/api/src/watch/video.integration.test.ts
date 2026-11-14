@@ -27,6 +27,11 @@ describe.skipIf(!testDbUrl)("Video Integration Tests", () => {
     });
 
     await runMigrations(testDbUrl!);
+    const { bot } = await import("@/telegram/bot");
+    bot().api.config.use(async (_prev, method) => {
+      if (method.startsWith("send")) return { ok: true, result: { message_id: 1 } } as never;
+      return { ok: true, result: true } as never;
+    });
     const appModule = await import("@/app");
     createApp = appModule.createApp;
   });
@@ -264,7 +269,7 @@ describe.skipIf(!testDbUrl)("Video Integration Tests", () => {
     expect(progress.maxPosition).toBeCloseTo(10);
   });
 
-  it("sets channel_click_at exactly once", async () => {
+  it("sets channel_click_at exactly once without marking wrote_admin_at", async () => {
     const telegramId = Math.floor(Math.random() * 1000000) + 400000;
     const user = await createRegisteredUser(telegramId);
 
@@ -274,7 +279,7 @@ describe.skipIf(!testDbUrl)("Video Integration Tests", () => {
 
     const [user1] = await db().select().from(users).where(eq(users.id, user.id));
     expect(user1.channelClickAt).toEqual(t1);
-    expect(user1.wroteAdminAt).toEqual(t1);
+    expect(user1.wroteAdminAt).toBeNull();
 
     const t2 = new Date(1700001000000);
     const res2 = await recordVideoEvent(telegramId, "channel_click", t2);
@@ -282,7 +287,7 @@ describe.skipIf(!testDbUrl)("Video Integration Tests", () => {
 
     const [user2] = await db().select().from(users).where(eq(users.id, user.id));
     expect(user2.channelClickAt).toEqual(t1);
-    expect(user2.wroteAdminAt).toEqual(t1);
+    expect(user2.wroteAdminAt).toBeNull();
 
     const clickEvents = (
       await db().select().from(events).where(eq(events.userId, user.id))

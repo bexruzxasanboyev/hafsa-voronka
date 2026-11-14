@@ -3,8 +3,8 @@ import { eq } from "drizzle-orm";
 import { hashPassword } from "@/admin/auth";
 import { closeDb, db } from "@/db";
 import { runMigrations } from "@/db/migrate";
-import { DEFAULT_MESSAGE_CAPS } from "@funnel/shared";
-import { users } from "@/db/schema";
+import { DEFAULT_MESSAGE_CAPS, businessConnectionsResponseSchema, businessConnectionItemSchema } from "@funnel/shared";
+import { businessConnections, settings, users } from "@/db/schema";
 import { isolatedDatabase } from "@/test/isolatedDb";
 import { setTestEnv } from "@/test/env";
 
@@ -88,12 +88,123 @@ describe.skipIf(!database.url)("Admin settings", () => {
   });
 
   it("saves per-audience message caps without touching the TTL", async () => {
-    const caps = { A: { daily: 8, total: null }, B: { daily: 3, total: 6 }, C: { daily: 10, total: 20 } };
+    const caps = { A: { daily: 8, total: null }, B: { daily: 3, total: 6 }, C: { daily: 10, total: 20 }, E: { daily: 2, total: 4 } };
     const saved = await put({ messageCaps: caps });
     expect(saved.status).toBe(200);
     expect(await saved.json()).toEqual({ linkTtlHours: 48, messageCaps: caps, chatCleanupHours: 24 });
     const { messageCaps } = await import("./service");
     expect(await messageCaps()).toEqual(caps);
+  });
+
+  it("upgrades legacy message caps rows missing segment E with defaults", async () => {
+    const legacy = { A: { daily: 7, total: null }, B: { daily: 3, total: 6 }, C: { daily: 9, total: 15 } };
+    await db()
+      .insert(settings)
+      .values({ key: "MESSAGE_CAPS", value: JSON.stringify(legacy) })
+      .onConflictDoUpdate({ target: settings.key, set: { value: JSON.stringify(legacy), updatedAt: new Date() } });
+    const { invalidateSettings } = await import("./service");
+    invalidateSettings();
+
+    const res = await app.request("/admin/settings", { headers: { cookie } });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { messageCaps: Record<string, unknown> };
+    expect(body.messageCaps).toEqual({
+      ...legacy,
+      E: DEFAULT_MESSAGE_CAPS.E,
+    });
+  });
+
+  it("lists and approves or revokes Telegram Business connections", async () => {
+    expect((await app.request("/admin/settings/business-connections")).status).toBe(401);
+    expect(
+      (
+        await app.request("/admin/settings/business-connections/missing", {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ isApproved: true }),
+        })
+      ).status,
+    ).toBe(401);
+
+    await db().insert(businessConnections).values([
+      {
+        id: "bc_old",
+        userTelegramId: 88001,
+        userChatId: 88001,
+        username: "old_seller",
+        firstName: "Old",
+        lastName: null,
+        canReply: false,
+        isEnabled: true,
+        isApproved: true,
+        connectedAt: new Date("2026-05-01T10:00:00.000Z"),
+        updatedAt: new Date("2026-05-01T10:00:00.000Z"),
+      },
+      {
+        id: "bc_new",
+        userTelegramId: 88002,
+        userChatId: 88002,
+        username: "new_seller",
+        firstName: "New",
+        lastName: "Seller",
+        canReply: true,
+        isEnabled: true,
+        isApproved: false,
+        connectedAt: new Date("2026-05-02T10:00:00.000Z"),
+        updatedAt: new Date("2026-05-02T10:00:00.000Z"),
+      },
+    ]);
+
+    const listRes = await app.request("/admin/settings/business-connections", { headers: { cookie } });
+    expect(listRes.status).toBe(200);
+    const listBody = businessConnectionsResponseSchema.parse(await listRes.json());
+    expect(listBody.botUsername).toBe("test_bot");
+    expect(listBody.items.map((item) => item.id)).toEqual(["bc_new", "bc_old"]);
+    expect(listBody.items[0]).toMatchObject({
+      id: "bc_new",
+      userTelegramId: 88002,
+      username: "new_seller",
+      firstName: "New",
+      lastName: "Seller",
+      canReply: true,
+      isEnabled: true,
+      isApproved: false,
+    });
+
+    const approveRes = await app.request("/admin/settings/business-connections/bc_new", {
+      method: "PATCH",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ isApproved: true }),
+    });
+    expect(approveRes.status).toBe(200);
+    const approvedBody = (await approveRes.json()) as { item: unknown };
+    const approvedItem = businessConnectionItemSchema.parse(approvedBody.item);
+    expect(approvedItem.isApproved).toBe(true);
+
+    const revokeRes = await app.request("/admin/settings/business-connections/bc_new", {
+      method: "PATCH",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ isApproved: false }),
+    });
+    expect(revokeRes.status).toBe(200);
+    const revokedBody = (await revokeRes.json()) as { item: unknown };
+    expect(businessConnectionItemSchema.parse(revokedBody.item).isApproved).toBe(false);
+
+    const invalidRes = await app.request("/admin/settings/business-connections/bc_new", {
+      method: "PATCH",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ isApproved: "yes" }),
+    });
+    expect(invalidRes.status).toBe(400);
+    expect(await invalidRes.json()).toEqual({ error: "invalid_request" });
+
+    const missingRes = await app.request("/admin/settings/business-connections/non_existent_id", {
+      method: "PATCH",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ isApproved: true }),
+    });
+    expect(missingRes.status).toBe(404);
+    expect(await missingRes.json()).toEqual({ error: "not_found" });
   });
 
   it("saves the chat cleanup delay and rejects values outside the offered choices", async () => {

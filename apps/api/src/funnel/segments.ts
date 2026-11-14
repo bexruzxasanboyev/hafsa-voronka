@@ -37,7 +37,11 @@ async function snapshot(executor: Executor, userId: number) {
     unchanged,
     open: row.open,
     endReason: (open: FunnelSegment) =>
-      endReasonFor(open, target, { botBlocked: row.user.botBlocked, wroteAdmin: row.user.wroteAdminAt !== null }),
+      endReasonFor(open, target, {
+        botBlocked: row.user.botBlocked,
+        wroteAdmin: row.user.wroteAdminAt !== null,
+        paid: row.user.paidAt !== null,
+      }),
   };
 }
 
@@ -56,7 +60,7 @@ export async function syncSegment(userId: number, now = new Date()): Promise<voi
         .set({ endedAt: now, endReason: current.endReason(current.open.segment) })
         .where(eq(segmentRuns.id, current.open.id));
     }
-    if (current.target === null) await cancelPendingAppointments(tx, userId, now);
+    if (current.target === null || current.target === "E") await cancelPendingAppointments(tx, userId, now);
     if (current.target !== null) {
       await tx.insert(segmentRuns).values({ userId, segment: current.target, enteredAt: now, attempt: current.attempt });
     }

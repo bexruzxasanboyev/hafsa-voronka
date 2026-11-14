@@ -1,13 +1,35 @@
 import { Hono } from "hono";
-import { adminSettingsUpdateSchema, type AdminSettings } from "@funnel/shared";
+import { desc, eq } from "drizzle-orm";
+import {
+  adminSettingsUpdateSchema,
+  businessConnectionApprovalSchema,
+  type AdminSettings,
+  type BusinessConnectionItem,
+} from "@funnel/shared";
 import { requireAdminAuth } from "@/admin/auth";
 import { db } from "@/db";
-import { settings } from "@/db/schema";
+import { businessConnections, settings, type BusinessConnectionRow } from "@/db/schema";
+import { env } from "@/env";
 import { chatCleanupHours, invalidateSettings, linkTtlHours, messageCaps } from "@/settings/service";
 
 export const adminSettingsRoutes = new Hono();
 
 adminSettingsRoutes.use("*", requireAdminAuth);
+
+function formatBusinessConnection(row: BusinessConnectionRow): BusinessConnectionItem {
+  return {
+    id: row.id,
+    userTelegramId: row.userTelegramId,
+    username: row.username,
+    firstName: row.firstName,
+    lastName: row.lastName,
+    canReply: row.canReply,
+    isEnabled: row.isEnabled,
+    isApproved: row.isApproved,
+    connectedAt: row.connectedAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
 
 async function currentSettings(): Promise<AdminSettings> {
   return {
@@ -41,4 +63,30 @@ adminSettingsRoutes.put("/", async (c) => {
   invalidateSettings();
 
   return c.json(await currentSettings());
+});
+
+adminSettingsRoutes.get("/business-connections", async (c) => {
+  const rows = await db()
+    .select()
+    .from(businessConnections)
+    .orderBy(desc(businessConnections.connectedAt));
+  return c.json({
+    items: rows.map(formatBusinessConnection),
+    botUsername: env.BOT_USERNAME,
+  });
+});
+
+adminSettingsRoutes.patch("/business-connections/:id", async (c) => {
+  const body = businessConnectionApprovalSchema.safeParse(await c.req.json().catch(() => null));
+  if (!body.success) return c.json({ error: "invalid_request" }, 400);
+
+  const id = c.req.param("id");
+  const [updated] = await db()
+    .update(businessConnections)
+    .set({ isApproved: body.data.isApproved, updatedAt: new Date() })
+    .where(eq(businessConnections.id, id))
+    .returning();
+
+  if (!updated) return c.json({ error: "not_found" }, 404);
+  return c.json({ item: formatBusinessConnection(updated) });
 });

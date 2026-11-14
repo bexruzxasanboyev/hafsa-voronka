@@ -84,7 +84,9 @@ export async function reopenWithin(
   restart = false,
 ): Promise<ReopenResult> {
   const [user] = await tx.select().from(users).where(eq(users.id, userId)).for("update");
-  if (!user || user.registeredAt === null || user.wroteAdminAt !== null || user.botBlocked) return "closed";
+  if (!user || user.registeredAt === null || user.paidAt !== null || user.wroteAdminAt !== null || user.botBlocked) {
+    return "closed";
+  }
   const state = await lessonState(tx, user, now);
   const segment = segmentFor(state.status);
   const restartable = restart && user.completedAt === null && segment !== null && linkBoundSegments.includes(segment);

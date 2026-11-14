@@ -15,7 +15,7 @@ async function main() {
 
   await bot.api.setWebhook(webhookUrl, {
     secret_token: required("WEBHOOK_SECRET"),
-    allowed_updates: ["message", "my_chat_member", "callback_query"],
+    allowed_updates: ["message", "my_chat_member", "callback_query", "business_connection", "business_message"],
     drop_pending_updates: true,
   });
 

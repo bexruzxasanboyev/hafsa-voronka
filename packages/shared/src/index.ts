@@ -11,6 +11,8 @@ export const eventTypes = [
   "progress_75",
   "video_complete",
   "channel_click",
+  "admin_chat",
+  "purchase_recorded",
   "reminder_when_open",
   "reminder_when_answer",
   "reminder_later",

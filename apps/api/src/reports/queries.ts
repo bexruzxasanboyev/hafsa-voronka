@@ -44,7 +44,7 @@ export async function getVideoReport({ from, to }: DateRange): Promise<VideoRepo
       count(*) FILTER (WHERE v.course_start_sec IS NOT NULL AND coalesce(wp.max_position, 0) >= v.course_start_sec) AS reached_course,
       count(*) FILTER (WHERE v.price_sec IS NOT NULL AND coalesce(wp.max_position, 0) >= v.price_sec) AS reached_price,
       count(*) FILTER (WHERE u.offer_watched_at IS NOT NULL) AS offer_watched,
-      count(*) FILTER (WHERE u.channel_click_at IS NOT NULL) AS wrote_admin
+      count(*) FILTER (WHERE coalesce(u.wrote_admin_at, u.channel_click_at) IS NOT NULL) AS wrote_admin
     FROM users u
     JOIN videos v ON v.id = u.video_id
     LEFT JOIN watch_progress wp ON wp.user_id = u.id
@@ -112,7 +112,7 @@ export async function getMessageReport({ from, to }: DateRange): Promise<Message
     scored AS (
       SELECT s.template_id, (s.clicked_at IS NOT NULL) AS clicked,
         (p.at > s.sent_at AND p.at <= s.window_end) AS price_after,
-        (u.channel_click_at > s.sent_at AND u.channel_click_at <= s.window_end) AS admin_after
+        (coalesce(u.wrote_admin_at, u.channel_click_at) > s.sent_at AND coalesce(u.wrote_admin_at, u.channel_click_at) <= s.window_end) AS admin_after
       FROM sent s JOIN users u ON u.id = s.user_id LEFT JOIN price p ON p.user_id = s.user_id
     )
     SELECT t.id, t.segment, t.day, t.position, t.text, (t.deleted_at IS NOT NULL) AS deleted,
@@ -123,13 +123,13 @@ export async function getMessageReport({ from, to }: DateRange): Promise<Message
       count(*) FILTER (WHERE sc.admin_after) AS admin_after,
       count(*) FILTER (WHERE sc.clicked AND sc.admin_after) AS clicked_admin_after
     FROM scored sc JOIN message_templates t ON t.id = sc.template_id
-    WHERE t.segment IN ('A', 'B', 'C')
+    WHERE t.segment IN ('A', 'B', 'C', 'E')
     GROUP BY t.id
     ORDER BY t.segment, t.day, t.position, t.id
   `);
 
   return rows.map((row) => {
-    const afterSegmentC = row.segment === "C";
+    const afterSegmentC = row.segment === "C" || row.segment === "E";
     return {
       templateId: Number(row.id),
       segment: row.segment,

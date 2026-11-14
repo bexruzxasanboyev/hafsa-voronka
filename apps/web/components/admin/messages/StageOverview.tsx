@@ -16,7 +16,10 @@ type StageStatus = { text: string; attention: boolean };
 
 function stageStatus(segment: FunnelSegment, items: MessageTemplate[], linkTtlHours: number | null): StageStatus {
   const count = items.length;
-  if (count === 0) return { text: copy.stages.empty, attention: true };
+  if (count === 0) {
+    if (segment === "E") return { text: copy.stages.optionalEmpty, attention: false };
+    return { text: copy.stages.empty, attention: true };
+  }
   const parts = [copy.count.replace("{n}", String(count))];
   if (segment === "A" && linkTtlHours !== null) parts.push(copy.stages.linkOpen.replace("{n}", String(linkTtlHours)));
   return { text: parts.join(" · "), attention: false };

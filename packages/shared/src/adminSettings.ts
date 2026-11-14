@@ -19,10 +19,13 @@ export const segmentCapSchema = z.object({
 
 export type SegmentCap = z.infer<typeof segmentCapSchema>;
 
+export const DEFAULT_SEGMENT_E_CAP = { daily: 2, total: 5 } as const;
+
 export const messageCapsSchema = z.object({
   A: segmentCapSchema,
   B: segmentCapSchema,
   C: segmentCapSchema,
+  E: segmentCapSchema.default(DEFAULT_SEGMENT_E_CAP),
 });
 
 export type MessageCaps = z.infer<typeof messageCapsSchema>;
@@ -31,6 +34,7 @@ export const DEFAULT_MESSAGE_CAPS: MessageCaps = {
   A: { daily: MESSAGE_DAILY_CEILING, total: null },
   B: { daily: 4, total: null },
   C: { daily: MESSAGE_DAILY_CEILING, total: null },
+  E: { ...DEFAULT_SEGMENT_E_CAP },
 };
 
 export const adminSettingsSchema = z.object({
@@ -46,3 +50,31 @@ export const adminSettingsUpdateSchema = adminSettingsSchema
 export type AdminSettings = z.infer<typeof adminSettingsSchema>;
 
 export type AdminSettingsUpdate = z.infer<typeof adminSettingsUpdateSchema>;
+
+export const businessConnectionItemSchema = z.object({
+  id: z.string(),
+  userTelegramId: z.number(),
+  username: z.string().nullable(),
+  firstName: z.string().nullable(),
+  lastName: z.string().nullable(),
+  canReply: z.boolean(),
+  isEnabled: z.boolean(),
+  isApproved: z.boolean(),
+  connectedAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export type BusinessConnectionItem = z.infer<typeof businessConnectionItemSchema>;
+
+export const businessConnectionsResponseSchema = z.object({
+  items: z.array(businessConnectionItemSchema),
+  botUsername: z.string(),
+});
+
+export type BusinessConnectionsResponse = z.infer<typeof businessConnectionsResponseSchema>;
+
+export const businessConnectionApprovalSchema = z.object({
+  isApproved: z.boolean(),
+});
+
+export type BusinessConnectionApproval = z.infer<typeof businessConnectionApprovalSchema>;

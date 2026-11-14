@@ -18,6 +18,8 @@ const columns: StatColumn<CampaignStat>[] = [
   { key: "completions", label: copy.completions, align: "right", render: (row) => row.completions },
   { key: "completionRate", label: copy.completionRate, align: "right", render: (row) => <span className="text-zumrad">{row.completionRate}%</span> },
   { key: "channelClicks", label: copy.channelClicks, align: "right", render: (row) => row.channelClicks },
+  { key: "realChats", label: copy.realChats, align: "right", render: (row) => row.realChats },
+  { key: "purchases", label: copy.purchases, align: "right", render: (row) => row.purchases },
 ];
 
 export function CampaignTable({ campaigns }: { campaigns: CampaignStat[] }) {

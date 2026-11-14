@@ -26,11 +26,11 @@ describe.skipIf(!isolated.url)("Template seed", () => {
 
   it("inserts once and skips on the second run", async () => {
     const first = await seedStartingTemplates();
-    expect(first).toEqual({ A: seedInputs("A").length, B: seedInputs("B").length, C: seedInputs("C").length });
+    expect(first).toEqual({ A: seedInputs("A").length, B: seedInputs("B").length, C: seedInputs("C").length, E: 0 });
     const second = await seedStartingTemplates();
-    expect(second).toEqual({ A: 0, B: 0, C: 0 });
+    expect(second).toEqual({ A: 0, B: 0, C: 0, E: 0 });
     const rows = await db().select().from(messageTemplates);
-    expect(rows).toHaveLength(first.A + first.B + first.C);
+    expect(rows).toHaveLength(first.A + first.B + first.C + first.E);
   });
 
   it("stores segment B statuses and sequential positions per day", async () => {

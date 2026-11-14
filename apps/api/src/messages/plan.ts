@@ -20,8 +20,8 @@ export const CHAIN_MS = TEMPLATE_DAYS * DAY_MS;
 export const GRACE_MS = 60 * MINUTE_MS;
 export const DAILY_CAP = MESSAGE_DAILY_CEILING;
 export const WATCHING_FRESH_MS = 2 * MINUTE_MS;
+export const ADMIN_CHAT_QUIET_MS = 30 * MINUTE_MS;
 const UNCAPPED: SegmentCap = { daily: DAILY_CAP, total: null };
-const stopAnchoredSegments: readonly FunnelSegment[] = ["B"];
 
 export type ScheduleTemplate = {
   id: number;
@@ -127,6 +127,7 @@ export type ChainRun = {
   status?: FunnelStatus | null;
   watch?: WatchSnapshot | null;
   grant?: FunnelGrant | null;
+  lastAdminChatAt?: Date | null;
 };
 
 export function planChain<T extends ScheduleTemplate>(templates: T[], run: ChainRun): PlanItem<T>[] {
@@ -138,15 +139,30 @@ export function planChain<T extends ScheduleTemplate>(templates: T[], run: Chain
   return items.sort(compareItems);
 }
 
-export function chainAnchor(run: { segment: FunnelSegment; enteredAt: Date }, watch: WatchSnapshot | null): Date {
-  const stoppedAt = watch?.lastBeatAt ?? null;
-  if (!stopAnchoredSegments.includes(run.segment) || stoppedAt === null) return run.enteredAt;
-  return stoppedAt.getTime() > run.enteredAt.getTime() ? stoppedAt : run.enteredAt;
+export function chainAnchor(
+  run: { segment: FunnelSegment; enteredAt: Date; lastAdminChatAt?: Date | null },
+  watch: WatchSnapshot | null,
+): Date {
+  if (run.segment === "B") {
+    const stoppedAt = watch?.lastBeatAt ?? null;
+    if (stoppedAt === null) return run.enteredAt;
+    return stoppedAt.getTime() > run.enteredAt.getTime() ? stoppedAt : run.enteredAt;
+  }
+  if (run.segment === "E") {
+    const chattedAt = run.lastAdminChatAt ?? null;
+    if (chattedAt === null) return run.enteredAt;
+    return chattedAt.getTime() > run.enteredAt.getTime() ? chattedAt : run.enteredAt;
+  }
+  return run.enteredAt;
 }
 
 export function isWatchingNow(watch: WatchSnapshot | null, now: Date): boolean {
   if (!watch?.playing || watch.lastBeatAt === null) return false;
   return now.getTime() - watch.lastBeatAt.getTime() < WATCHING_FRESH_MS;
+}
+
+export function isChattingWithAdminNow(lastAdminChatAt: Date | null | undefined, now: Date): boolean {
+  return Boolean(lastAdminChatAt && now.getTime() - lastAdminChatAt.getTime() < ADMIN_CHAT_QUIET_MS);
 }
 
 export function templatesForStatus<T extends Pick<ScheduleTemplate, "statuses">>(

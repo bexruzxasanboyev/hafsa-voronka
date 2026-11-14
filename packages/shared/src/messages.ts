@@ -38,6 +38,7 @@ export const segmentStatuses: Record<FunnelSegment, readonly FunnelStatus[]> = {
   A: ["link_berildi"],
   B: ["korishni_boshladi", "dars_yarmida", "sotuvda_toxtadi"],
   C: ["narxni_kurdi"],
+  E: ["adminga_yozdi"],
 };
 
 export const statusTargetSegments: readonly FunnelSegment[] = ["B"];

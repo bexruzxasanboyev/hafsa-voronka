@@ -30,15 +30,41 @@ export async function upsertUser(
     .limit(1);
 
   if (existing) {
+    let lastTouchFields: {
+      lastUtmSource?: string | null;
+      lastUtmCampaign?: string | null;
+      lastUtmContent?: string | null;
+      lastTouchAt?: Date;
+    } = {};
+    if (startParam) {
+      const attribution = await resolveAttribution(startParam);
+      if (attribution.utm_source || attribution.utm_campaign || attribution.utm_content) {
+        lastTouchFields = {
+          lastUtmSource: attribution.utm_source ?? null,
+          lastUtmCampaign: attribution.utm_campaign ?? null,
+          lastUtmContent: attribution.utm_content ?? null,
+          lastTouchAt: new Date(),
+        };
+      }
+    }
     const [updated] = await db()
       .update(users)
-      .set(profileFields)
+      .set({ ...profileFields, ...lastTouchFields })
       .where(eq(users.id, existing.id))
       .returning();
     return { user: updated, isNew: false };
   }
 
   const attribution = await resolveAttribution(startParam);
+  const hasUtm = Boolean(attribution.utm_source || attribution.utm_campaign || attribution.utm_content);
+  const lastTouchFields = hasUtm
+    ? {
+        lastUtmSource: attribution.utm_source ?? null,
+        lastUtmCampaign: attribution.utm_campaign ?? null,
+        lastUtmContent: attribution.utm_content ?? null,
+        lastTouchAt: new Date(),
+      }
+    : {};
   const [created] = await db()
     .insert(users)
     .values({
@@ -49,10 +75,14 @@ export async function upsertUser(
       utmSource: attribution.utm_source ?? null,
       utmCampaign: attribution.utm_campaign ?? null,
       utmContent: attribution.utm_content ?? null,
+      ...lastTouchFields,
       fbclid: attribution.fbclid ?? null,
       videoId: sql`(select id from videos where is_active)`,
     })
-    .onConflictDoUpdate({ target: users.telegramId, set: profileFields })
+    .onConflictDoUpdate({
+      target: users.telegramId,
+      set: { ...profileFields, ...lastTouchFields },
+    })
     .returning();
   return { user: created, isNew: true };
 }

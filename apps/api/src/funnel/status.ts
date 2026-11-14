@@ -14,9 +14,10 @@ export function lessonStartSec(video: VideoMarks): number {
 export function statusFor(
   progress: StatusProgress | undefined,
   video: VideoMarks,
-  user: Pick<User, "registeredAt" | "wroteAdminAt" | "offerWatchedAt">,
+  user: Pick<User, "registeredAt" | "wroteAdminAt" | "offerWatchedAt"> & { paidAt?: Date | null },
 ): FunnelStatus | null {
   if (user.registeredAt === null) return null;
+  if ((user.paidAt ?? null) !== null) return "sotib_oldi";
   if (user.wroteAdminAt !== null) return "adminga_yozdi";
   if (user.offerWatchedAt !== null) return "narxni_kurdi";
   if (!progress || (progress.startedAt === null && progress.maxPosition === 0)) return "link_berildi";
@@ -39,7 +40,8 @@ export function isLessonClosed(
     now >= user.linkExpiresAt &&
     user.completedAt === null &&
     status !== "narxni_kurdi" &&
-    status !== "adminga_yozdi"
+    status !== "adminga_yozdi" &&
+    status !== "sotib_oldi"
   );
 }
 
@@ -53,6 +55,8 @@ export function segmentFor(status: FunnelStatus | null): FunnelSegment | null {
       return "B";
     case "narxni_kurdi":
       return "C";
+    case "adminga_yozdi":
+      return "E";
     default:
       return null;
   }
@@ -61,8 +65,8 @@ export function segmentFor(status: FunnelStatus | null): FunnelSegment | null {
 export function endReasonFor(
   open: FunnelSegment,
   target: FunnelSegment | null,
-  user: { botBlocked: boolean; wroteAdmin: boolean },
+  user: { botBlocked: boolean; wroteAdmin: boolean; paid?: boolean },
 ): SegmentEndReason {
-  if (target === null) return user.botBlocked ? "bot_blocked" : "wrote_admin";
+  if (target === null) return user.botBlocked ? "bot_blocked" : user.paid ? "bought" : "wrote_admin";
   return open === target ? "relinked" : "advanced";
 }

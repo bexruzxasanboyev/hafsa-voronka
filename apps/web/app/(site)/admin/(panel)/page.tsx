@@ -10,6 +10,7 @@ import { DateRangeFilter } from "@/components/admin/DateRangeFilter";
 import { DropoffBars } from "@/components/admin/DropoffBars";
 import { FunnelChart } from "@/components/admin/FunnelChart";
 import { KpiCards } from "@/components/admin/KpiCards";
+import { NetworkAttributionCard } from "@/components/admin/NetworkAttributionCard";
 import { Button, buttonClass } from "@/components/admin/ui/Button";
 import { Field } from "@/components/admin/ui/Field";
 import { Page, PageHeader } from "@/components/admin/ui/Page";
@@ -234,6 +235,7 @@ function AdminDashboardContent() {
             <DropoffBars dropoff={stats.dropoff} />
             <DailyChart daily={stats.daily} />
           </div>
+          <NetworkAttributionCard attribution={stats.attribution} />
           <CampaignTable campaigns={stats.campaigns} />
         </>
       )}

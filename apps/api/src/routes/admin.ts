@@ -22,6 +22,7 @@ import {
   getHealthStats,
   getLeads,
   getLeadsCsv,
+  getNetworkAttribution,
   getWatchDropoff,
 } from "@/admin/queries";
 import { clientIp } from "@/http/clientIp";
@@ -94,13 +95,14 @@ adminRoutes.get("/stats", requireAdminAuth, async (c) => {
     campaign: query.data.campaign || undefined,
   };
 
-  const [funnelAndKpis, daily, campaigns, dropoff, health, filterOptions] = await Promise.all([
+  const [funnelAndKpis, daily, campaigns, dropoff, health, filterOptions, attribution] = await Promise.all([
     getFunnelAndKpis(filters),
     getDailySeries(filters),
     getCampaignStats(filters),
     getWatchDropoff(filters),
     getHealthStats(),
     getFilterOptions(),
+    getNetworkAttribution(filters),
   ]);
 
   return c.json({
@@ -113,6 +115,7 @@ adminRoutes.get("/stats", requireAdminAuth, async (c) => {
     dropoff,
     health,
     filterOptions,
+    attribution,
   });
 });
 

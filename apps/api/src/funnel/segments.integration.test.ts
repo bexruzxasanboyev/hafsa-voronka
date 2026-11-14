@@ -21,6 +21,8 @@ describe.skipIf(!testDbUrl)("Segment runs", () => {
   let bot: typeof import("@/telegram/bot").bot;
   let markBlockedByTelegramId: typeof import("@/telegram/blocked").markBlockedByTelegramId;
   let setBotBlocked: typeof import("./users").setBotBlocked;
+  let markWroteAdmin: typeof import("./channel").markWroteAdmin;
+  let markPaid: typeof import("./channel").markPaid;
 
   beforeAll(async () => {
     setTestEnv({ DATABASE_URL: testDbUrl!, COMPLETE_THRESHOLD: "0.95" });
@@ -31,6 +33,7 @@ describe.skipIf(!testDbUrl)("Segment runs", () => {
     ({ bot } = await import("@/telegram/bot"));
     ({ markBlockedByTelegramId } = await import("@/telegram/blocked"));
     ({ setBotBlocked } = await import("./users"));
+    ({ markWroteAdmin, markPaid } = await import("./channel"));
   });
 
   afterAll(async () => {
@@ -107,16 +110,28 @@ describe.skipIf(!testDbUrl)("Segment runs", () => {
     expect(runs[0]).toMatchObject({ id: openRun.id, segment: "A", endedAt: null });
   });
 
-  it("closes the open run with wrote_admin on channel click and opens nothing", async () => {
+  it("keeps C open on channel click, opens E on admin chat, and closes E on bought", async () => {
     const { user, telegramId } = await registeredUser();
     await recordProgress(telegramId, { position: 0, event: "play" });
     await setMaxPosition(user.id, 900);
     await recordVideoEvent(telegramId, "channel_click");
-    const runs = await runsOf(user.id);
-    expect(runs.map((run) => run.segment)).toEqual(["A", "B", "C"]);
-    expect(runs[2]).toMatchObject({ endReason: "wrote_admin" });
-    expect(runs[2].endedAt).not.toBeNull();
-    expect(runs.filter((run) => run.endedAt === null)).toHaveLength(0);
+    const afterClick = await runsOf(user.id);
+    expect(afterClick.map((run) => run.segment)).toEqual(["A", "B", "C"]);
+    expect(afterClick[2].endedAt).toBeNull();
+
+    await markWroteAdmin(user.id, null);
+    const afterChat = await runsOf(user.id);
+    expect(afterChat.map((run) => run.segment)).toEqual(["A", "B", "C", "E"]);
+    expect(afterChat[2]).toMatchObject({ endReason: "advanced" });
+    expect(afterChat[2].endedAt).not.toBeNull();
+    expect(afterChat[3].endedAt).toBeNull();
+
+    await markPaid(user.id, null);
+    const afterPaid = await runsOf(user.id);
+    expect(afterPaid.map((run) => run.segment)).toEqual(["A", "B", "C", "E"]);
+    expect(afterPaid[3]).toMatchObject({ endReason: "bought" });
+    expect(afterPaid[3].endedAt).not.toBeNull();
+    expect(afterPaid.filter((run) => run.endedAt === null)).toHaveLength(0);
   });
 
   it("is a no-op when synced twice", async () => {

@@ -21,6 +21,8 @@ export const kpiStatsSchema = z.object({
   registrations: z.number(),
   completions: z.number(),
   channelClicks: z.number(),
+  realChats: z.number(),
+  purchases: z.number(),
   conversionRate: z.number(),
 });
 
@@ -52,6 +54,8 @@ export const campaignStatSchema = z.object({
   completions: z.number(),
   completionRate: z.number(),
   channelClicks: z.number(),
+  realChats: z.number(),
+  purchases: z.number(),
 });
 
 export type CampaignStat = z.infer<typeof campaignStatSchema>;
@@ -85,6 +89,27 @@ export const statsFilterOptionsSchema = z.object({
 
 export type StatsFilterOptions = z.infer<typeof statsFilterOptionsSchema>;
 
+export const attributionNetworks = ["ig", "fb", "tg", "organic", "other"] as const;
+
+export type AttributionNetwork = (typeof attributionNetworks)[number];
+
+export const networkAttributionRowSchema = z.object({
+  network: z.enum(attributionNetworks),
+  registrations: z.number(),
+  buttonClicks: z.number(),
+  realChats: z.number(),
+  purchases: z.number(),
+});
+
+export type NetworkAttributionRow = z.infer<typeof networkAttributionRowSchema>;
+
+export const networkAttributionSchema = z.object({
+  firstTouch: z.array(networkAttributionRowSchema),
+  lastTouch: z.array(networkAttributionRowSchema),
+});
+
+export type NetworkAttribution = z.infer<typeof networkAttributionSchema>;
+
 export const adminStatsResponseSchema = z.object({
   from: z.string(),
   to: z.string(),
@@ -95,6 +120,7 @@ export const adminStatsResponseSchema = z.object({
   dropoff: z.array(dropoffStatSchema),
   health: healthStatSchema,
   filterOptions: statsFilterOptionsSchema,
+  attribution: networkAttributionSchema,
 });
 
 export type AdminStatsResponse = z.infer<typeof adminStatsResponseSchema>;
@@ -120,6 +146,8 @@ export const leadItemSchema = z.object({
   progressPercent: z.number(),
   completed: z.boolean(),
   channelClicked: z.boolean(),
+  wroteAdmin: z.boolean(),
+  paid: z.boolean(),
 });
 
 export type LeadItem = z.infer<typeof leadItemSchema>;

@@ -8,6 +8,7 @@ export function funnelStatusSql(): SQL<FunnelStatus | null> {
   const lessonStart = sql`coalesce(${videos.introEndSec}::float8, coalesce(${videos.courseStartSec}, ${videos.priceSec}, ${videos.duration}, ${NO_VIDEO_MARKS.duration})::float8 / 2)`;
   return sql<FunnelStatus | null>`case
     when ${users.registeredAt} is null then null
+    when ${users.paidAt} is not null then 'sotib_oldi'
     when ${users.wroteAdminAt} is not null then 'adminga_yozdi'
     when ${users.offerWatchedAt} is not null then 'narxni_kurdi'
     when ${watchProgress.userId} is null or (${watchProgress.startedAt} is null and ${position} = 0) then 'link_berildi'

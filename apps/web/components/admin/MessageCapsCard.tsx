@@ -27,19 +27,28 @@ type CappedSegment = keyof MessageCaps;
 type CapsText = Record<CappedSegment, CapText>;
 
 function toText(caps: MessageCaps): CapsText {
-  const entry = (segment: CappedSegment): CapText => ({
-    daily: String(caps[segment].daily),
-    total: caps[segment].total === null ? "" : String(caps[segment].total),
-  });
-  return { A: entry("A"), B: entry("B"), C: entry("C") };
+  return Object.fromEntries(
+    funnelSegments.map((segment) => [
+      segment,
+      {
+        daily: String(caps[segment].daily),
+        total: caps[segment].total === null ? "" : String(caps[segment].total),
+      },
+    ]),
+  ) as CapsText;
 }
 
 function parseCaps(text: CapsText): MessageCaps | null {
-  const entry = (segment: CappedSegment) => ({
-    daily: Number(text[segment].daily),
-    total: text[segment].total.trim() === "" ? null : Number(text[segment].total),
-  });
-  const parsed = messageCapsSchema.safeParse({ A: entry("A"), B: entry("B"), C: entry("C") });
+  const raw = Object.fromEntries(
+    funnelSegments.map((segment) => [
+      segment,
+      {
+        daily: Number(text[segment].daily),
+        total: text[segment].total.trim() === "" ? null : Number(text[segment].total),
+      },
+    ]),
+  );
+  const parsed = messageCapsSchema.safeParse(raw);
   return parsed.success ? parsed.data : null;
 }
 
