@@ -155,48 +155,50 @@ export function AdminUsersCard() {
         </ul>
       )}
 
-      <form onSubmit={add} className="flex flex-col gap-3 sm:max-w-sm">
+      <form onSubmit={add} className="flex flex-col gap-3 border-t border-chiziq pt-4">
         <h3 className="m-0 text-sm font-semibold text-siyoh">{copy.addTitle}</h3>
-        <Field label={copy.usernameLabel} hint={copy.usernameHint}>
-          {({ id, describedBy }) => (
-            <Input
-              id={id}
-              aria-describedby={describedBy}
-              type="text"
-              autoComplete="off"
-              autoCapitalize="none"
-              autoCorrect="off"
-              spellCheck={false}
-              value={username}
-              disabled={adding}
-              onChange={(e) => {
-                setUsername(e.target.value);
-                setFormError(null);
-              }}
-            />
-          )}
-        </Field>
-        <Field
-          label={copy.passwordLabel}
-          hint={copy.passwordHint.replace("{min}", String(ADMIN_PASSWORD_MIN_LENGTH))}
-          error={formError}
-        >
-          {({ id, describedBy, invalid }) => (
-            <Input
-              id={id}
-              aria-describedby={describedBy}
-              invalid={invalid}
-              type="password"
-              autoComplete="new-password"
-              value={password}
-              disabled={adding}
-              onChange={(e) => {
-                setPassword(e.target.value);
-                setFormError(null);
-              }}
-            />
-          )}
-        </Field>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Field label={copy.usernameLabel} hint={copy.usernameHint}>
+            {({ id, describedBy }) => (
+              <Input
+                id={id}
+                aria-describedby={describedBy}
+                type="text"
+                autoComplete="off"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                value={username}
+                disabled={adding}
+                onChange={(e) => {
+                  setUsername(e.target.value);
+                  setFormError(null);
+                }}
+              />
+            )}
+          </Field>
+          <Field
+            label={copy.passwordLabel}
+            hint={copy.passwordHint.replace("{min}", String(ADMIN_PASSWORD_MIN_LENGTH))}
+            error={formError}
+          >
+            {({ id, describedBy, invalid }) => (
+              <Input
+                id={id}
+                aria-describedby={describedBy}
+                invalid={invalid}
+                type="password"
+                autoComplete="new-password"
+                value={password}
+                disabled={adding}
+                onChange={(e) => {
+                  setPassword(e.target.value);
+                  setFormError(null);
+                }}
+              />
+            )}
+          </Field>
+        </div>
         <div className="flex justify-end">
           <Button type="submit" disabled={!username.trim() || !password} loading={adding} loadingLabel={copy.adding}>
             {copy.add}

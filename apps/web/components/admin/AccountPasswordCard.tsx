@@ -76,9 +76,9 @@ export function AccountPasswordCard() {
       )}
       {loadError && <Notice tone="danger">{copy.loadError}</Notice>}
 
-      <form onSubmit={submit} className="flex flex-col gap-3 sm:max-w-sm">
+      <form onSubmit={submit} className="flex flex-col gap-3">
         <h3 className="m-0 text-sm font-semibold text-siyoh">{copy.changePassword}</h3>
-        <Field label={copy.currentLabel}>
+        <Field label={copy.currentLabel} className="sm:max-w-sm">
           {({ id }) => (
             <Input
               id={id}
@@ -93,39 +93,41 @@ export function AccountPasswordCard() {
             />
           )}
         </Field>
-        <Field label={copy.newLabel} hint={copy.newHint.replace("{min}", String(ADMIN_PASSWORD_MIN_LENGTH))}>
-          {({ id, describedBy }) => (
-            <Input
-              id={id}
-              aria-describedby={describedBy}
-              type="password"
-              autoComplete="new-password"
-              value={next}
-              disabled={busy}
-              onChange={(e) => {
-                setNext(e.target.value);
-                reset();
-              }}
-            />
-          )}
-        </Field>
-        <Field label={copy.repeatLabel} error={formError}>
-          {({ id, describedBy, invalid }) => (
-            <Input
-              id={id}
-              aria-describedby={describedBy}
-              invalid={invalid}
-              type="password"
-              autoComplete="new-password"
-              value={repeat}
-              disabled={busy}
-              onChange={(e) => {
-                setRepeat(e.target.value);
-                reset();
-              }}
-            />
-          )}
-        </Field>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Field label={copy.newLabel} hint={copy.newHint.replace("{min}", String(ADMIN_PASSWORD_MIN_LENGTH))}>
+            {({ id, describedBy }) => (
+              <Input
+                id={id}
+                aria-describedby={describedBy}
+                type="password"
+                autoComplete="new-password"
+                value={next}
+                disabled={busy}
+                onChange={(e) => {
+                  setNext(e.target.value);
+                  reset();
+                }}
+              />
+            )}
+          </Field>
+          <Field label={copy.repeatLabel} error={formError}>
+            {({ id, describedBy, invalid }) => (
+              <Input
+                id={id}
+                aria-describedby={describedBy}
+                invalid={invalid}
+                type="password"
+                autoComplete="new-password"
+                value={repeat}
+                disabled={busy}
+                onChange={(e) => {
+                  setRepeat(e.target.value);
+                  reset();
+                }}
+              />
+            )}
+          </Field>
+        </div>
 
         {phase === "error" && serverError && <Notice tone="danger">{serverError}</Notice>}
         {phase === "saved" && <Notice tone="success">{copy.success}</Notice>}
