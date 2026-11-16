@@ -16,7 +16,8 @@ async function main() {
   await bot.api.setWebhook(webhookUrl, {
     secret_token: required("WEBHOOK_SECRET"),
     allowed_updates: ["message", "my_chat_member", "callback_query", "business_connection", "business_message"],
-    drop_pending_updates: true,
+    // Re-registering on a live bot must not discard what users sent meanwhile; opt in explicitly.
+    drop_pending_updates: process.env.DROP_PENDING_UPDATES === "true",
   });
 
   if (webUrl.startsWith("https://")) {

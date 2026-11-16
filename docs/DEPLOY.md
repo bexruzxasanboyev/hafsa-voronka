@@ -155,7 +155,7 @@ Runs the API, Postgres and the local Telegram Bot API server with Docker Compose
 5. First start: `./deploy/deploy.sh`. Migrations run when the API starts; the script waits for `https://<API_DOMAIN>/health`.
 6. Point the bot at the server (once, and after any domain change), using the running container's env:
    ```bash
-   docker compose --env-file deploy/.env.prod -f deploy/docker-compose.prod.yml exec api node -e "fetch('https://api.telegram.org/bot'+process.env.BOT_TOKEN+'/setWebhook',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({url:process.env.API_URL+'/bot',secret_token:process.env.WEBHOOK_SECRET,allowed_updates:['message','my_chat_member','callback_query']})}).then(r=>r.json()).then(console.log)"
+   docker compose --env-file deploy/.env.prod -f deploy/docker-compose.prod.yml exec api node -e "fetch('https://api.telegram.org/bot'+process.env.BOT_TOKEN+'/setWebhook',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({url:process.env.API_URL+'/bot',secret_token:process.env.WEBHOOK_SECRET,allowed_updates:['message','my_chat_member','callback_query','business_connection','business_message']})}).then(r=>r.json()).then(console.log)"
    ```
    Or run `scripts/set-webhook.ts` from a machine with the repo and the same env.
 
@@ -242,13 +242,28 @@ WEBHOOK_SECRET="<PRODUCTION_WEBHOOK_SECRET>" \
 pnpm --filter @funnel/api set-webhook
 ```
 
-Alternatively, configure the webhook using curl:
+Alternatively, configure the webhook using curl. `allowed_updates` must list the Telegram Business updates, or real chats with the admin are never recorded:
 
 ```bash
 curl -F "url=https://api.yourdomain.uz/bot" \
      -F "secret_token=<PRODUCTION_WEBHOOK_SECRET>" \
+     -F 'allowed_updates=["message","my_chat_member","callback_query","business_connection","business_message"]' \
      https://api.telegram.org/bot<PRODUCTION_BOT_TOKEN>/setWebhook
 ```
+
+The script keeps pending updates. Set `DROP_PENDING_UPDATES=true` only when you deliberately want to discard the backlog (for example after pointing a test bot at a dead tunnel).
+
+### Telegram Business (admin chat tracking)
+
+The «Haqiqiy yozdi» (real chats) metric and receipts sent in the admin's chats come from Telegram Business, not from the button click.
+
+1. In `@BotFather` → your bot → Bot Settings → **Business Mode** → turn on.
+2. The sales admin's account needs Telegram Premium. In Telegram: Settings → Telegram Business → **Chatbots** → add the bot, and allow it to read messages in all private chats (or the chats you want tracked).
+3. The admin's Telegram id must be in `ADMIN_TELEGRAM_IDS`; connections from other accounts are stored but not approved.
+4. Re-run the webhook script above so `business_connection` and `business_message` are delivered.
+5. Check: write to the admin account from a test user who went through the bot. The user's «Haqiqiy yozdi» count in Statistika goes up within a minute.
+
+Until an approved Business connection exists, clicking «Adminga yozish» stops sales reminders (the old behaviour), so nothing breaks before setup. From the moment the connection is approved, only a real chat (or «Yozdi» / "won" on the lead card) stops them, and people who clicked but never wrote keep getting follow-ups. Connect Business right after the deploy.
 
 Verify webhook status:
 
@@ -446,6 +461,19 @@ Execute the complete end-to-end user journey:
 - [ ] Stats funnel numbers match a manual count from one test run
 - [ ] Admin page requires login; CSV export works
 
+### Release Checklist: Payments, Telegram Ads, 30-day Reminders (November 2026)
+
+- [ ] Back up first: `deploy/backup.sh`. Migrations 0027-0030 run at API startup in one transaction and lock `users`, `sent_messages`, `segment_runs` and `message_templates` briefly; deploy at low traffic
+- [ ] Commit everything: the Vercel build needs `apps/web/components/admin/bot/BotWorkspace.tsx`
+- [ ] Optional receipt OCR: set `GEMINI_API_KEY` in `deploy/.env.prod`
+- [ ] Re-register the webhook (`set-webhook.ts`, Section 5) so `business_connection` and `business_message` arrive
+- [ ] Connect Telegram Business on the sales admin's account ("Telegram Business", Section 5) and send one test message; «Haqiqiy yozdi» in Statistika must go up
+- [ ] 30-day loop: only users who enter a stage after the deploy loop; existing runs keep the old behaviour. Days 8-30 have no texts until admins write them in Eslatmalar
+- [ ] Night restriction (23:00-07:00) is off by default; turn it on in Sozlamalar only if wanted
+- [ ] Stage E («Adminga yozdi, sotib olmadi») has no texts; write them before expecting any follow-up
+- [ ] In To'lovlar → «Katalog va guruhlar», create courses, tariffs and groups before recording payments
+- [ ] Telegram Ads link: Statistika → «Havolalar» → preset `tg`; check one click shows under Manba = tg
+
 ### Release Checklist for This Branch (Messages, Videos, Reports)
 
 - [ ] Migrations 0006-0011 run automatically at API startup; nothing to run by hand
@@ -549,4 +577,7 @@ Comprehensive reference for all environment variables used by the API and Web ap
 | `NEXT_PUBLIC_API_URL` | Web (`apps/web`) | Required | `https://api.yourdomain.uz` | Public API URL accessible from browser/Mini App |
 | `NEXT_PUBLIC_BOT_USERNAME` | Web (`apps/web`) | Required | `your_bot` | Telegram bot username (without @) for deep linking |
 | `NEXT_PUBLIC_APP_URL` | Web (`apps/web`) | Required | `https://hafsa.azeemov.uz` | Public site URL; makes the link-preview (OG) image URL absolute |
+| `GEMINI_API_KEY` | API (`apps/api`) | Optional | `AIza...` | Google Gemini key for reading payment receipts (OCR). Without it, receipts are confirmed by hand |
+| `GEMINI_OCR_MODEL` | API (`apps/api`) | Optional | `gemini-2.5-flash` (default) | Gemini model used for receipt OCR |
+| `DROP_PENDING_UPDATES` | set-webhook script | Optional | `false` (default) | `true` discards queued Telegram updates when registering the webhook |
 | `TEST_DATABASE_URL` | Test Runner | Optional (CI / Tests) | `postgres://funnel:funnel@localhost:5432/funnel_test` | Isolated database URL for running integration tests |
