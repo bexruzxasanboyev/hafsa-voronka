@@ -31,15 +31,16 @@ export function createApp() {
   const app = new Hono();
   const handleUpdate = webhookCallback(bot(), "hono");
   const origins = webOrigins();
+  // Only exact WEB_URL / CORS_ORIGINS entries are trusted. Any *.vercel.app name can be claimed by
+  // another Vercel account, so a wildcard would hand admin credentials to sites we do not control.
+  const allowLocalhost = process.env.NODE_ENV !== "production";
   const originFor = (origin: string) => {
     if (!origin) return null;
     if (origins.has(origin)) return origin;
     try {
       const url = new URL(origin);
       if (
-        url.hostname.endsWith(".vercel.app") ||
-        url.hostname === "localhost" ||
-        url.hostname === "127.0.0.1" ||
+        (allowLocalhost && (url.hostname === "localhost" || url.hostname === "127.0.0.1")) ||
         (origins.has("https://*.trycloudflare.com") &&
           url.protocol === "https:" &&
           url.hostname.endsWith(".trycloudflare.com"))
