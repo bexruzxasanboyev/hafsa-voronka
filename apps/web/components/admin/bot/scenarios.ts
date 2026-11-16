@@ -58,3 +58,36 @@ export function buttonUsage(key: BotButtonKey) {
     .flat()
     .filter((card) => card.buttons.some((button) => button.key === key)).length;
 }
+
+export type BotMessageGroupId = "core" | "later" | "system";
+
+export type BotMessageGroupEntry = {
+  key: BotMessageKey;
+  group: BotMessageGroupId;
+  step?: number;
+};
+
+export const botMessageGroups: BotMessageGroupEntry[] = [
+  { key: "watchPrompt", group: "core" },
+  { key: "completion", group: "core" },
+  { key: "welcome", group: "core" },
+  { key: "welcomeBack", group: "core" },
+  { key: "rolloutPrompt", group: "core" },
+  { key: "laterAsk", group: "later", step: 1 },
+  { key: "laterPickDay", group: "later", step: 2 },
+  { key: "laterPickHour", group: "later", step: 3 },
+  { key: "laterConfirmed", group: "later", step: 4 },
+  { key: "reopenPreReminder", group: "later", step: 5 },
+  { key: "reopenNow", group: "later", step: 6 },
+  { key: "fallback", group: "system" },
+  { key: "remindNow", group: "system" },
+  { key: "laterTooLate", group: "system" },
+  { key: "offerClosed", group: "system" },
+  { key: "laterAck", group: "system" },
+];
+
+export function scenarioCardFor(key: BotMessageKey): ScenarioCard | undefined {
+  return Object.values(scenarios)
+    .flat()
+    .find((card) => card.key === key);
+}

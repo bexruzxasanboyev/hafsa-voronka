@@ -1,15 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type { BotTextItem, BotTextKey, ScheduledBroadcast } from "@funnel/shared";
-import { BotChat } from "@/components/admin/bot/BotChat";
-import { BotTextEditor } from "@/components/admin/bot/BotTextEditor";
+import type { BotTextItem, ScheduledBroadcast } from "@funnel/shared";
+import { BotWorkspace } from "@/components/admin/bot/BotWorkspace";
 import { BroadcastEditor } from "@/components/admin/bot/BroadcastEditor";
 import { BroadcastsPanel } from "@/components/admin/bot/BroadcastsPanel";
-import { type ScenarioId, scenarioOrder } from "@/components/admin/bot/scenarios";
+import { botMessageGroups } from "@/components/admin/bot/scenarios";
 import { Notice } from "@/components/admin/ui/Notice";
 import { Page, PageHeader } from "@/components/admin/ui/Page";
-import { Segmented } from "@/components/admin/ui/Segmented";
 import { ErrorState, LoadingState } from "@/components/admin/ui/States";
 import { fetchBotTexts } from "@/lib/admin/botTexts";
 import { cancelBroadcast, fetchBroadcasts } from "@/lib/admin/broadcasts";
@@ -19,6 +17,10 @@ const copy = adminUz.botTexts;
 const broadcastsCopy = adminUz.broadcasts;
 
 type SectionTab = "auto" | "broadcasts";
+type BroadcastEditorState = {
+  item: ScheduledBroadcast | null;
+  duplicateFrom?: ScheduledBroadcast | null;
+} | null;
 
 export default function AdminBotTextsPage() {
   const [section, setSection] = useState<SectionTab>("auto");
@@ -26,15 +28,13 @@ export default function AdminBotTextsPage() {
   const [mediaEnabled, setMediaEnabled] = useState(false);
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
-  const [scenario, setScenario] = useState<ScenarioId>("newUser");
-  const [editing, setEditing] = useState<BotTextKey | null>(null);
 
   const [broadcasts, setBroadcasts] = useState<ScheduledBroadcast[] | null>(null);
   const [broadcastMediaEnabled, setBroadcastMediaEnabled] = useState(false);
   const [broadcastsFailed, setBroadcastsFailed] = useState(false);
   const [broadcastsAttempt, setBroadcastsAttempt] = useState(0);
   const [broadcastError, setBroadcastError] = useState<string | null>(null);
-  const [editingBroadcast, setEditingBroadcast] = useState<{ item: ScheduledBroadcast | null } | null>(null);
+  const [editingBroadcast, setEditingBroadcast] = useState<BroadcastEditorState>(null);
 
   useEffect(() => {
     let active = true;
@@ -82,7 +82,9 @@ export default function AdminBotTextsPage() {
     };
   }, [section, broadcastsAttempt]);
 
-  const hasRunningBroadcast = Boolean(broadcasts?.some((item) => item.status === "running" || item.status === "scheduled"));
+  const hasRunningBroadcast = Boolean(
+    broadcasts?.some((item) => item.status === "running" || item.status === "scheduled"),
+  );
 
   useEffect(() => {
     if (section !== "broadcasts" || !hasRunningBroadcast) return;
@@ -91,8 +93,6 @@ export default function AdminBotTextsPage() {
     }, 5000);
     return () => clearInterval(timer);
   }, [section, hasRunningBroadcast, loadBroadcasts]);
-
-  const editingItem = items?.find((item) => item.key === editing) ?? null;
 
   const retry = () => {
     setFailed(false);
@@ -128,62 +128,59 @@ export default function AdminBotTextsPage() {
     );
   }
 
+  const autoCount = botMessageGroups.length;
+  const broadcastCount = broadcasts?.length ?? null;
+
   return (
-    <Page width="narrow">
+    <Page width="wide">
       <PageHeader title={adminUz.pages.botTexts.title} description={adminUz.pages.botTexts.description} />
 
-      <div className="mx-auto w-full max-w-[640px]">
-        <Segmented
-          label={broadcastsCopy.pageTabsLabel}
-          role="tablist"
-          fill
-          value={section}
-          onChange={setSection}
-          items={[
-            { value: "auto", label: broadcastsCopy.pageTabs.auto },
-            { value: "broadcasts", label: broadcastsCopy.pageTabs.broadcasts },
-          ]}
-        />
+      <div
+        role="tablist"
+        aria-label={broadcastsCopy.pageTabsLabel}
+        className="flex items-center gap-1 border-b border-chiziq"
+      >
+        {(
+          [
+            { id: "auto", label: broadcastsCopy.pageTabs.auto, count: autoCount },
+            { id: "broadcasts", label: broadcastsCopy.pageTabs.broadcasts, count: broadcastCount },
+          ] as const
+        ).map((tabItem) => {
+          const active = section === tabItem.id;
+          return (
+            <button
+              key={tabItem.id}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => setSection(tabItem.id)}
+              className={`-mb-px inline-flex items-center gap-2 border-b-2 px-3.5 py-2.5 text-sm transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-siyoh ${
+                active
+                  ? "border-siyoh font-semibold text-siyoh"
+                  : "border-transparent font-medium text-qalam hover:text-siyoh"
+              }`}
+            >
+              <span>{tabItem.label}</span>
+              {tabItem.count !== null && (
+                <span
+                  className={`inline-flex h-5 min-w-[22px] items-center justify-center rounded-full px-1.5 text-[11.5px] font-semibold tabular-nums ${
+                    active ? "bg-siyoh text-white" : "bg-varaq text-qalam"
+                  }`}
+                >
+                  {tabItem.count}
+                </span>
+              )}
+            </button>
+          );
+        })}
       </div>
 
       {section === "auto" && (
         <>
           {items && !mediaEnabled && <Notice tone="info">{copy.mediaDisabled}</Notice>}
-
           {failed && <ErrorState onRetry={retry} />}
           {!items && !failed && <LoadingState variant="list" rows={3} />}
-
-          {items && (
-            <div className="flex flex-col gap-4">
-              <div className="mx-auto w-full max-w-[640px]">
-                <Segmented
-                  label={copy.tabsLabel}
-                  role="tablist"
-                  fill
-                  value={scenario}
-                  onChange={setScenario}
-                  items={scenarioOrder.map((id) => ({ value: id, label: copy.tabs[id] }))}
-                />
-              </div>
-              <BotChat
-                key={scenario}
-                scenario={scenario}
-                items={items}
-                onEditMessage={setEditing}
-                onEditButton={setEditing}
-              />
-            </div>
-          )}
-
-          {editingItem && (
-            <BotTextEditor
-              key={editingItem.key}
-              item={editingItem}
-              mediaEnabled={mediaEnabled}
-              onItems={setItems}
-              onClose={() => setEditing(null)}
-            />
-          )}
+          {items && <BotWorkspace items={items} mediaEnabled={mediaEnabled} onItems={setItems} />}
         </>
       )}
 
@@ -202,13 +199,20 @@ export default function AdminBotTextsPage() {
               broadcasts={broadcasts}
               onCreate={() => setEditingBroadcast({ item: null })}
               onEdit={(item) => setEditingBroadcast({ item })}
+              onDuplicate={(item) => setEditingBroadcast({ item: null, duplicateFrom: item })}
               onCancel={handleBroadcastCancel}
             />
           )}
           {editingBroadcast && (
             <BroadcastEditor
-              key={editingBroadcast.item?.id ?? "new-broadcast"}
+              key={
+                editingBroadcast.item?.id ??
+                (editingBroadcast.duplicateFrom
+                  ? `dup-${editingBroadcast.duplicateFrom.id}`
+                  : "new-broadcast")
+              }
               item={editingBroadcast.item}
+              duplicateFrom={editingBroadcast.duplicateFrom ?? null}
               mediaEnabled={broadcastMediaEnabled}
               onSaved={handleBroadcastSaved}
               onClose={() => setEditingBroadcast(null)}

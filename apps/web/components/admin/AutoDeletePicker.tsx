@@ -26,7 +26,14 @@ export function formatAutoDelete(minutes: number | null): string {
   return copy.badgeMinutes.replace("{m}", String(m));
 }
 
-export function AutoDeleteBadge({ minutes }: { minutes: number | null }) {
+export function AutoDeleteBadge({
+  minutes,
+  keepForever = true,
+}: {
+  minutes: number | null;
+  keepForever?: boolean;
+}) {
+  if (minutes === null && !keepForever) return null;
   return (
     <Badge>
       {minutes === null ? <PinIcon className="mr-1 h-3 w-3" /> : <ClockIcon className="mr-1 h-3 w-3" />}
@@ -35,15 +42,29 @@ export function AutoDeleteBadge({ minutes }: { minutes: number | null }) {
   );
 }
 
+type DefaultOption = {
+  active: boolean;
+  onSelect: () => void;
+  onNever: () => void;
+};
+
 type AutoDeletePickerProps = {
   value: number | null;
   onChange: (minutes: number | null) => void;
   id?: string;
   error?: string | null;
   label?: string;
+  defaultOption?: DefaultOption;
 };
 
-export function AutoDeletePicker({ value, onChange, id, error, label = copy.label }: AutoDeletePickerProps) {
+export function AutoDeletePicker({
+  value,
+  onChange,
+  id,
+  error,
+  label = copy.label,
+  defaultOption,
+}: AutoDeletePickerProps) {
   const generatedId = useId();
   const groupId = id ?? generatedId;
   const [customOpen, setCustomOpen] = useState(() => !isPresetValue(value));
@@ -55,13 +76,27 @@ export function AutoDeletePicker({ value, onChange, id, error, label = copy.labe
   const activeError = error ?? (rangeInvalid ? copy.rangeError : null);
 
   const options: { key: string; label: string; active: boolean; onClick: () => void }[] = [
+    ...(defaultOption
+      ? [
+          {
+            key: "default",
+            label: copy.standard,
+            active: !showCustom && defaultOption.active,
+            onClick: () => {
+              setCustomOpen(false);
+              defaultOption.onSelect();
+            },
+          },
+        ]
+      : []),
     {
       key: "never",
       label: copy.never,
-      active: !showCustom && value === null,
+      active: !showCustom && value === null && !defaultOption?.active,
       onClick: () => {
         setCustomOpen(false);
-        onChange(null);
+        if (defaultOption) defaultOption.onNever();
+        else onChange(null);
       },
     },
     ...AUTO_DELETE_PRESETS.map((preset) => ({

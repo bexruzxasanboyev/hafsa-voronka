@@ -5,7 +5,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   autoDeleteMinutesSchema,
   type BroadcastAudience,
-  broadcastAudiences,
   type BroadcastButton,
   type BroadcastButtonKind,
   broadcastButtonKinds,
@@ -55,6 +54,8 @@ const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
 const MINUTES = Array.from({ length: 60 }, (_, minute) => minute);
 const PREVIEW_DEBOUNCE_MS = 300;
 
+type SchedulePreset = "now" | "todayEvening" | "tomorrowMorning" | "tomorrowEvening" | "custom";
+
 type ScheduleParts = {
   year: number;
   month: number;
@@ -62,6 +63,12 @@ type ScheduleParts = {
   hour: number;
   minute: number;
 };
+
+const audienceColumns: { title: string; keys: BroadcastAudience[] }[] = [
+  { title: editorCopy.audienceGroups.general, keys: ["all"] },
+  { title: editorCopy.audienceGroups.stages, keys: ["A", "B", "C", "E"] },
+  { title: editorCopy.audienceGroups.purchase, keys: ["bought", "not_bought"] },
+];
 
 function pad(value: number) {
   return String(value).padStart(2, "0");
@@ -71,14 +78,17 @@ function daysInMonth(year: number, month: number): number {
   return new Date(Date.UTC(year, month, 0)).getUTCDate();
 }
 
-function isoToTashkentParts(iso: string): ScheduleParts {
-  const local = new Date(new Date(iso).getTime() + TASHKENT_OFFSET_MS);
-  const rawYear = local.getUTCFullYear();
-  const year = (YEARS as readonly number[]).includes(rawYear)
+function clampYear(rawYear: number): number {
+  return (YEARS as readonly number[]).includes(rawYear)
     ? rawYear
     : rawYear < YEARS[0]
       ? YEARS[0]
       : YEARS[YEARS.length - 1];
+}
+
+function isoToTashkentParts(iso: string): ScheduleParts {
+  const local = new Date(new Date(iso).getTime() + TASHKENT_OFFSET_MS);
+  const year = clampYear(local.getUTCFullYear());
   const month = local.getUTCMonth() + 1;
   const maxDay = daysInMonth(year, month);
   return {
@@ -87,6 +97,20 @@ function isoToTashkentParts(iso: string): ScheduleParts {
     day: Math.min(local.getUTCDate(), maxDay),
     hour: local.getUTCHours(),
     minute: local.getUTCMinutes(),
+  };
+}
+
+function tashkentPresetParts(dayOffset: number, hour: number, minute: number): ScheduleParts {
+  const nowLocal = new Date(Date.now() + TASHKENT_OFFSET_MS);
+  const target = new Date(
+    Date.UTC(nowLocal.getUTCFullYear(), nowLocal.getUTCMonth(), nowLocal.getUTCDate() + dayOffset, hour, minute),
+  );
+  return {
+    year: clampYear(target.getUTCFullYear()),
+    month: target.getUTCMonth() + 1,
+    day: target.getUTCDate(),
+    hour: target.getUTCHours(),
+    minute: target.getUTCMinutes(),
   };
 }
 
@@ -206,23 +230,33 @@ function BroadcastButtonsEditor({ buttons, onChange }: BroadcastButtonsEditorPro
 
 type BroadcastEditorProps = {
   item: ScheduledBroadcast | null;
+  duplicateFrom?: ScheduledBroadcast | null;
   mediaEnabled: boolean;
   onSaved: (item: ScheduledBroadcast) => void;
   onClose: () => void;
 };
 
-export function BroadcastEditor({ item, mediaEnabled, onSaved, onClose }: BroadcastEditorProps) {
-  const [text, setText] = useState(item?.text ?? "");
+export function BroadcastEditor({
+  item,
+  duplicateFrom = null,
+  mediaEnabled,
+  onSaved,
+  onClose,
+}: BroadcastEditorProps) {
+  const source = item ?? duplicateFrom;
+  const [text, setText] = useState(source?.text ?? "");
   const [media, setMedia] = useState<{ type: "photo" | "video" | "voice"; fileId: string } | null>(
-    item?.media?.fileId ? { type: item.media.type, fileId: item.media.fileId } : null,
+    source?.media?.fileId ? { type: source.media.type, fileId: source.media.fileId } : null,
   );
-  const [buttons, setButtons] = useState<BroadcastButton[]>(item?.buttons ?? []);
-  const [audiences, setAudiences] = useState<BroadcastAudience[]>(item?.audiences ?? ["all"]);
+  const [buttons, setButtons] = useState<BroadcastButton[]>(source?.buttons ?? []);
+  const [audiences, setAudiences] = useState<BroadcastAudience[]>(source?.audiences ?? ["all"]);
+  const [preset, setPreset] = useState<SchedulePreset>(item ? "custom" : "tomorrowMorning");
   const [schedule, setSchedule] = useState<ScheduleParts>(() =>
-    isoToTashkentParts(item?.scheduledAt ?? new Date(Date.now() + 60 * 60 * 1000).toISOString()),
+    item
+      ? isoToTashkentParts(item.scheduledAt)
+      : tashkentPresetParts(1, 9, 0),
   );
-  const [sendImmediate, setSendImmediate] = useState(false);
-  const [autoDeleteMinutes, setAutoDeleteMinutes] = useState<number | null>(item?.autoDeleteMinutes ?? null);
+  const [autoDeleteMinutes, setAutoDeleteMinutes] = useState<number | null>(source?.autoDeleteMinutes ?? null);
   const [busy, setBusy] = useState<"save" | "upload" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [localMedia, setLocalMedia] = useState<{ url: string; type: string } | null>(null);
@@ -254,7 +288,7 @@ export function BroadcastEditor({ item, mediaEnabled, onSaved, onClose }: Broadc
     };
   }, [audiences, audienceKey]);
 
-  const hasMedia = media !== null || Boolean(item?.media);
+  const hasMedia = media !== null || Boolean(source?.media);
   const sanitized = sanitizeTelegramHtml(text);
   const textError = validateBroadcastText(text, hasMedia);
   const length = sanitized.ok ? visibleLength(sanitized.html) : text.length;
@@ -295,7 +329,7 @@ export function BroadcastEditor({ item, mediaEnabled, onSaved, onClose }: Broadc
   );
 
   function updateSchedule(patch: Partial<ScheduleParts>) {
-    setSendImmediate(false);
+    setPreset("custom");
     setError(null);
     setSchedule((current) => {
       const next = { ...current, ...patch };
@@ -304,10 +338,18 @@ export function BroadcastEditor({ item, mediaEnabled, onSaved, onClose }: Broadc
     });
   }
 
-  function applySendNow() {
-    setSchedule(isoToTashkentParts(nowTashkentIso()));
-    setSendImmediate(true);
+  function applyPreset(nextPreset: SchedulePreset) {
+    setPreset(nextPreset);
     setError(null);
+    if (nextPreset === "now") {
+      setSchedule(isoToTashkentParts(nowTashkentIso()));
+    } else if (nextPreset === "todayEvening") {
+      setSchedule(tashkentPresetParts(0, 20, 0));
+    } else if (nextPreset === "tomorrowMorning") {
+      setSchedule(tashkentPresetParts(1, 9, 0));
+    } else if (nextPreset === "tomorrowEvening") {
+      setSchedule(tashkentPresetParts(1, 20, 0));
+    }
   }
 
   function toggleAudience(target: BroadcastAudience) {
@@ -356,7 +398,7 @@ export function BroadcastEditor({ item, mediaEnabled, onSaved, onClose }: Broadc
       media: media ?? null,
       buttons,
       audiences,
-      scheduledAt: sendImmediate ? nowTashkentIso() : tashkentPartsToIso(schedule),
+      scheduledAt: preset === "now" ? nowTashkentIso() : tashkentPartsToIso(schedule),
       autoDeleteMinutes,
     };
     return run(
@@ -375,25 +417,48 @@ export function BroadcastEditor({ item, mediaEnabled, onSaved, onClose }: Broadc
 
   const previewSrc =
     localMedia?.url ??
-    (item?.media && (!media || media.fileId === item.media.fileId) ? broadcastMediaUrl(item) : null);
-  const mediaType = media?.type ?? item?.media?.type;
+    (source?.media && (!media || media.fileId === source.media.fileId)
+      ? broadcastMediaUrl(source)
+      : null);
+  const mediaType = media?.type ?? source?.media?.type;
   const MediaIcon = mediaType ? mediaIcons[mediaType] : null;
+
+  const sheetTitle = item
+    ? editorCopy.editTitle
+    : duplicateFrom
+      ? editorCopy.duplicateTitle
+      : editorCopy.newTitle;
 
   const footer = (
     <div className="flex flex-col gap-3">
       {error && <Notice tone="danger">{error}</Notice>}
-      <div className="flex flex-wrap items-center justify-end gap-2">
-        <Button variant="ghost" disabled={busy !== null} onClick={onClose}>
-          {adminUz.confirm.cancel}
-        </Button>
-        <Button
-          disabled={!canSubmit}
-          loading={busy === "save"}
-          loadingLabel={editorCopy.saving}
-          onClick={() => void save()}
-        >
-          {item ? editorCopy.saveEdit : editorCopy.save}
-        </Button>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="text-[13px] font-medium text-siyoh">
+          {!audiencesValid ? (
+            <span className="text-anor">{editorCopy.audiencesRequired}</span>
+          ) : previewLoading ? (
+            <span className="text-qalam">{editorCopy.previewLoading}</span>
+          ) : previewFailedFetch ? (
+            <span className="text-anor">{editorCopy.previewError}</span>
+          ) : recipientCount !== null ? (
+            recipientCount === 0
+              ? editorCopy.previewZero
+              : editorCopy.previewCount.replace("{count}", formatCount(recipientCount))
+          ) : null}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="ghost" disabled={busy !== null} onClick={onClose}>
+            {adminUz.confirm.cancel}
+          </Button>
+          <Button
+            disabled={!canSubmit}
+            loading={busy === "save"}
+            loadingLabel={editorCopy.saving}
+            onClick={() => void save()}
+          >
+            {item ? editorCopy.saveEdit : preset === "now" ? editorCopy.presets.now : editorCopy.save}
+          </Button>
+        </div>
       </div>
     </div>
   );
@@ -404,7 +469,7 @@ export function BroadcastEditor({ item, mediaEnabled, onSaved, onClose }: Broadc
       onClose={() => {
         if (busy === null) onClose();
       }}
-      title={item ? editorCopy.editTitle : editorCopy.newTitle}
+      title={sheetTitle}
       size="wide"
       footer={footer}
     >
@@ -447,9 +512,34 @@ export function BroadcastEditor({ item, mediaEnabled, onSaved, onClose }: Broadc
                   <ClockIcon className="h-4 w-4 text-qalam" />
                   {editorCopy.scheduleTitle}
                 </span>
-                <Button variant="secondary" size="sm" onClick={applySendNow}>
-                  {editorCopy.sendNowButton}
-                </Button>
+              </div>
+
+              <div className="flex flex-wrap gap-1.5">
+                {(
+                  [
+                    { id: "now", label: editorCopy.presets.now },
+                    { id: "todayEvening", label: editorCopy.presets.todayEvening },
+                    { id: "tomorrowMorning", label: editorCopy.presets.tomorrowMorning },
+                    { id: "tomorrowEvening", label: editorCopy.presets.tomorrowEvening },
+                    { id: "custom", label: editorCopy.presets.custom },
+                  ] as const
+                ).map((opt) => {
+                  const active = preset === opt.id;
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => applyPreset(opt.id)}
+                      className={`inline-flex min-h-9 items-center rounded-[9px] px-3 py-1 text-[12.5px] transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-siyoh ${
+                        active
+                          ? "bg-siyoh font-semibold text-varaq"
+                          : "bg-varaq font-medium text-siyoh hover:bg-chiziq/70"
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
               </div>
 
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
@@ -505,47 +595,42 @@ export function BroadcastEditor({ item, mediaEnabled, onSaved, onClose }: Broadc
                 </Field>
               </div>
 
-              {sendImmediate && <p className="m-0 text-[13px] text-zumrad">{editorCopy.sendNowHint}</p>}
+              {preset === "now" && <p className="m-0 text-[13px] text-zumrad">{editorCopy.sendNowHint}</p>}
             </section>
 
-            <section className="flex flex-col gap-2.5 rounded-[12px] border border-chiziq p-3">
+            <section className="flex flex-col gap-3 rounded-[12px] border border-chiziq p-3">
               <span className="text-sm font-medium text-siyoh">{editorCopy.audiencesLabel}</span>
-              <div className="flex flex-wrap gap-2">
-                {broadcastAudiences.map((audience) => {
-                  const selected = audiences.includes(audience);
-                  return (
-                    <button
-                      key={audience}
-                      type="button"
-                      aria-pressed={selected}
-                      onClick={() => toggleAudience(audience)}
-                      className={`inline-flex min-h-10 items-center gap-1.5 rounded-[10px] px-3 py-1.5 text-[13px] transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-siyoh ${
-                        selected
-                          ? "bg-siyoh font-semibold text-varaq"
-                          : "bg-varaq font-medium text-siyoh hover:bg-chiziq/70"
-                      }`}
-                    >
-                      {selected && <CheckIcon className="h-3.5 w-3.5" />}
-                      {editorCopy.audiences[audience]}
-                    </button>
-                  );
-                })}
+              <div className="grid gap-2.5 sm:grid-cols-3">
+                {audienceColumns.map((col) => (
+                  <div
+                    key={col.title}
+                    className="flex flex-col gap-1.5 rounded-[10px] border border-chiziq/60 bg-varaq/35 p-2.5"
+                  >
+                    <span className="text-[11px] font-bold uppercase tracking-[0.04em] text-qalam">
+                      {col.title}
+                    </span>
+                    {col.keys.map((audience) => {
+                      const selected = audiences.includes(audience);
+                      return (
+                        <button
+                          key={audience}
+                          type="button"
+                          aria-pressed={selected}
+                          onClick={() => toggleAudience(audience)}
+                          className={`flex min-h-9 w-full items-center justify-between gap-2 rounded-[9px] border px-2.5 py-1.5 text-left text-[12.5px] transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-siyoh ${
+                            selected
+                              ? "border-siyoh bg-siyoh font-semibold text-white"
+                              : "border-chiziq/70 bg-white font-medium text-siyoh hover:bg-varaq/60"
+                          }`}
+                        >
+                          <span className="min-w-0 truncate">{editorCopy.audiences[audience]}</span>
+                          {selected && <CheckIcon className="h-3.5 w-3.5 shrink-0" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ))}
               </div>
-              {!audiencesValid ? (
-                <p role="alert" className="m-0 text-[13px] text-anor">
-                  {editorCopy.audiencesRequired}
-                </p>
-              ) : previewLoading ? (
-                <p className="m-0 text-[13px] text-qalam">{editorCopy.previewLoading}</p>
-              ) : previewFailedFetch ? (
-                <p className="m-0 text-[13px] text-anor">{editorCopy.previewError}</p>
-              ) : recipientCount !== null ? (
-                <p className="m-0 text-[13px] font-medium text-siyoh">
-                  {recipientCount === 0
-                    ? editorCopy.previewZero
-                    : editorCopy.previewCount.replace("{count}", formatCount(recipientCount))}
-                </p>
-              ) : null}
             </section>
 
             <AutoDeletePicker value={autoDeleteMinutes} onChange={setAutoDeleteMinutes} />
