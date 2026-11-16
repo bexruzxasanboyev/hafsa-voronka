@@ -683,6 +683,7 @@ export async function updateEnrollment(
         | "group_not_found"
         | "tariff_course_mismatch"
         | "installments_sum_mismatch"
+        | "installments_required"
         | "invalid_installments";
     }
 > {
@@ -728,6 +729,14 @@ export async function updateEnrollment(
 
     const nextContractAmountUzs = input.contractAmountUzs ?? existing.contractAmountUzs;
     let nextInstallmentMonths = existing.installmentMonths;
+
+    if (
+      input.contractAmountUzs !== undefined &&
+      input.contractAmountUzs !== existing.contractAmountUzs &&
+      !input.installments
+    ) {
+      return { ok: false as const, code: "installments_required" as const };
+    }
 
     if (input.installments) {
       if (input.installments.length < 1 || input.installments.length > 36) {

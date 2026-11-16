@@ -72,6 +72,11 @@ export function CatalogSheet({
   const [tariffCourseId, setTariffCourseId] = useState<string>(
     catalog.courses[0] ? String(catalog.courses[0].id) : FILTER_NONE,
   );
+  const effectiveTariffCourseId = catalog.courses.some((c) => String(c.id) === tariffCourseId)
+    ? tariffCourseId
+    : catalog.courses[0]
+      ? String(catalog.courses[0].id)
+      : FILTER_NONE;
   const [tariffName, setTariffName] = useState("");
   const [tariffPrice, setTariffPrice] = useState("1000000");
   const [tariffAllowsInstallments, setTariffAllowsInstallments] = useState(true);
@@ -143,7 +148,7 @@ export function CatalogSheet({
 
   async function handleTariffSubmit(event: FormEvent) {
     event.preventDefault();
-    const courseIdNum = Number(tariffCourseId);
+    const courseIdNum = Number(effectiveTariffCourseId);
     const name = tariffName.trim();
     const priceUzs = parseUzsInput(tariffPrice);
     const months = Number(tariffDefaultMonths);
@@ -482,7 +487,7 @@ export function CatalogSheet({
                     {({ id }) => (
                       <Select
                         id={id}
-                        value={tariffCourseId}
+                        value={effectiveTariffCourseId}
                         onValueChange={setTariffCourseId}
                         options={courseSelectOptions}
                       />

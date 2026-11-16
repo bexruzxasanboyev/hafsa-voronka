@@ -197,6 +197,7 @@ adminPaymentRoutes.put("/enrollments/:id", async (c) => {
     const status =
       result.code === "tariff_course_mismatch" ||
       result.code === "installments_sum_mismatch" ||
+      result.code === "installments_required" ||
       result.code === "invalid_installments"
         ? 422
         : 404;

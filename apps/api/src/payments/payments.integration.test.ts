@@ -403,6 +403,13 @@ describe.skipIf(!isolatedDb.url)("Payments, debts, receipts, and courses API", (
     const doubleRefund = await api(`/records/${pay2Body.payment.id}/refund`, { method: "POST" });
     expect(doubleRefund.status).toBe(409);
 
+    const amountOnlyRes = await api(`/enrollments/${created.id}`, {
+      method: "PUT",
+      body: JSON.stringify({ contractAmountUzs: 2_500_000 }),
+    });
+    expect(amountOnlyRes.status).toBe(422);
+    expect(((await amountOnlyRes.json()) as { error: string }).error).toBe("installments_required");
+
     const editRes = await api(`/enrollments/${created.id}`, {
       method: "PUT",
       body: JSON.stringify({
