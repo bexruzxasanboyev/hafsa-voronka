@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { funnelStatuses, type FunnelStatus } from "@funnel/shared";
-import { endReasonFor, isLessonClosed, segmentFor, statusFor } from "./status";
+import { endReasonFor, isLessonClosed, lifecycleSegmentFor, segmentFor, statusFor } from "./status";
 
 type Marks = { duration: number; introEndSec: number | null; courseStartSec: number | null; priceSec: number | null };
 
@@ -100,12 +100,33 @@ describe("statusFor", () => {
 
 describe("isLessonClosed", () => {
   it("stays open for narxni_kurdi, adminga_yozdi, and sotib_oldi", () => {
-    const expired = { registeredAt: new Date(1), linkExpiresAt: new Date(10), completedAt: null };
+    const expired = { registeredAt: new Date(1), linkExpiresAt: new Date(10), completedAt: null, channelClickAt: null };
     const now = new Date(20);
-    expect(isLessonClosed(expired, "link_berildi", now)).toBe(true);
-    expect(isLessonClosed(expired, "narxni_kurdi", now)).toBe(false);
-    expect(isLessonClosed(expired, "adminga_yozdi", now)).toBe(false);
-    expect(isLessonClosed(expired, "sotib_oldi", now)).toBe(false);
+    expect(isLessonClosed(expired, "link_berildi", now, true)).toBe(true);
+    expect(isLessonClosed(expired, "narxni_kurdi", now, true)).toBe(false);
+    expect(isLessonClosed(expired, "adminga_yozdi", now, true)).toBe(false);
+    expect(isLessonClosed(expired, "sotib_oldi", now, true)).toBe(false);
+  });
+
+  it("keeps the lesson open after an admin-button click only while clicks count", () => {
+    const clicked = { registeredAt: new Date(1), linkExpiresAt: new Date(10), completedAt: null, channelClickAt: new Date(5) };
+    expect(isLessonClosed(clicked, "link_berildi", new Date(20), true)).toBe(false);
+    expect(isLessonClosed(clicked, "link_berildi", new Date(20), false)).toBe(true);
+  });
+});
+
+describe("lifecycleSegmentFor", () => {
+  const none = { wroteAdminAt: null, channelClickAt: null };
+  const clicked = { wroteAdminAt: null, channelClickAt: new Date(1) };
+
+  it("moves an admin-button click to E without Business, and only a real chat with Business", () => {
+    expect(lifecycleSegmentFor("narxni_kurdi", none, true)).toBe("C");
+    expect(lifecycleSegmentFor("narxni_kurdi", clicked, true)).toBe("E");
+    expect(lifecycleSegmentFor("link_berildi", clicked, true)).toBe("E");
+    expect(lifecycleSegmentFor("narxni_kurdi", clicked, false)).toBe("C");
+    expect(lifecycleSegmentFor("adminga_yozdi", none, false)).toBe("E");
+    expect(lifecycleSegmentFor("sotib_oldi", clicked, true)).toBeNull();
+    expect(lifecycleSegmentFor(null, clicked, true)).toBeNull();
   });
 });
 

@@ -5,6 +5,7 @@ import type { AppEnv } from "@/auth";
 import { db } from "@/db";
 import { linkGrants, watchProgress } from "@/db/schema";
 import { env } from "@/env";
+import { clickCountsAsAdminContact } from "@/funnel/adminContact";
 import { isLessonClosed, NO_VIDEO_MARKS, statusFor } from "@/funnel/status";
 import { logEvent, upsertUser } from "@/funnel/users";
 import { reopenLesson } from "@/links/service";
@@ -64,7 +65,7 @@ miniappRoutes.post("/session", async (c) => {
     start,
   });
   const status = statusFor(progress, video ?? NO_VIDEO_MARKS, user);
-  const expired = isLessonClosed(user, status, now);
+  const expired = isLessonClosed(user, status, now, await clickCountsAsAdminContact());
 
   return c.json({
     registered: user.registeredAt !== null,

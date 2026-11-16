@@ -29,13 +29,25 @@ export function statusFor(
   return position >= lessonStartSec(video) ? "dars_yarmida" : "korishni_boshladi";
 }
 
+type AdminContact = Pick<User, "wroteAdminAt" | "channelClickAt">;
+
+/**
+ * Funnel lifecycle notion of "contacted sales": a verified chat (wroteAdminAt), or an admin-button click
+ * (channelClickAt) when `clickCounts` (see clickCountsAsAdminContact). Stats always keep the two apart.
+ */
+export function contactedAdmin(user: AdminContact, clickCounts: boolean): boolean {
+  return user.wroteAdminAt !== null || (clickCounts && user.channelClickAt !== null);
+}
+
 export function isLessonClosed(
-  user: Pick<User, "registeredAt" | "linkExpiresAt" | "completedAt">,
+  user: Pick<User, "registeredAt" | "linkExpiresAt" | "completedAt" | "channelClickAt">,
   status: FunnelStatus | null,
   now: Date,
+  clickCounts: boolean,
 ): boolean {
   return (
     user.registeredAt !== null &&
+    !(clickCounts && user.channelClickAt !== null) &&
     user.linkExpiresAt !== null &&
     now >= user.linkExpiresAt &&
     user.completedAt === null &&
@@ -60,6 +72,15 @@ export function segmentFor(status: FunnelStatus | null): FunnelSegment | null {
     default:
       return null;
   }
+}
+
+export function lifecycleSegmentFor(
+  status: FunnelStatus | null,
+  user: AdminContact,
+  clickCounts: boolean,
+): FunnelSegment | null {
+  if (status !== null && status !== "sotib_oldi" && contactedAdmin(user, clickCounts)) return "E";
+  return segmentFor(status);
 }
 
 export function endReasonFor(

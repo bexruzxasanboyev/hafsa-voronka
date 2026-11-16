@@ -204,10 +204,14 @@ export const segmentRuns = pgTable(
     endedAt: timestamp("ended_at", { withTimezone: true }),
     endReason: text("end_reason", { enum: segmentEndReasons }),
     attempt: smallint("attempt").default(1).notNull(),
+    // 30-day looping applies only to runs opened after loops shipped; 0030 sets it false for older runs.
+    loopEligible: boolean("loop_eligible").default(true).notNull(),
   },
   (t) => [
     uniqueIndex("segment_runs_one_open_idx").on(t.userId).where(sql`${t.endedAt} is null`),
     index("segment_runs_user_entered_idx").on(t.userId, t.enteredAt),
+    index("segment_runs_open_entered_idx").on(t.enteredAt).where(sql`${t.endedAt} is null`),
+    index("segment_runs_open_loop_idx").on(t.segment).where(sql`${t.endedAt} is null and ${t.loopEligible}`),
     check("segment_runs_end_pair", sql`(${t.endedAt} is null) = (${t.endReason} is null)`),
   ],
 );

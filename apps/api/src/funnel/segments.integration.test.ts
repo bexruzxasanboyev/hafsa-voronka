@@ -9,6 +9,10 @@ import { createTestVideo } from "@/test/videos";
 
 const testDbUrl = process.env.TEST_DATABASE_URL;
 
+// This file shares the server test database, so Business-connection state is mocked instead of inserted.
+const businessLive = vi.hoisted(() => ({ value: false }));
+vi.mock("./adminContact", () => ({ clickCountsAsAdminContact: async () => !businessLive.value }));
+
 function randomTelegramId() {
   return 40_000_000 + Math.floor(Math.random() * 50_000_000);
 }
@@ -110,20 +114,67 @@ describe.skipIf(!testDbUrl)("Segment runs", () => {
     expect(runs[0]).toMatchObject({ id: openRun.id, segment: "A", endedAt: null });
   });
 
-  it("keeps C open on channel click, opens E on admin chat, and closes E on bought", async () => {
+  it("keeps C open on channel click, opens E on admin chat, and closes E on bought while Business is live", async () => {
+    businessLive.value = true;
+    try {
+      const { user, telegramId } = await registeredUser();
+      await recordProgress(telegramId, { position: 0, event: "play" });
+      await setMaxPosition(user.id, 900);
+      await recordVideoEvent(telegramId, "channel_click");
+      const afterClick = await runsOf(user.id);
+      expect(afterClick.map((run) => run.segment)).toEqual(["A", "B", "C"]);
+      expect(afterClick[2].endedAt).toBeNull();
+
+      await markWroteAdmin(user.id, null);
+      const afterChat = await runsOf(user.id);
+      expect(afterChat.map((run) => run.segment)).toEqual(["A", "B", "C", "E"]);
+      expect(afterChat[2]).toMatchObject({ endReason: "advanced" });
+      expect(afterChat[2].endedAt).not.toBeNull();
+      expect(afterChat[3].endedAt).toBeNull();
+
+      await markPaid(user.id, null);
+      const afterPaid = await runsOf(user.id);
+      expect(afterPaid.map((run) => run.segment)).toEqual(["A", "B", "C", "E"]);
+      expect(afterPaid[3]).toMatchObject({ endReason: "bought" });
+      expect(afterPaid.filter((run) => run.endedAt === null)).toHaveLength(0);
+    } finally {
+      businessLive.value = false;
+    }
+  });
+
+  it("keeps someone moved to E by a click in E after Business goes live", async () => {
+    const { user, telegramId } = await registeredUser();
+    await recordProgress(telegramId, { position: 0, event: "play" });
+    await setMaxPosition(user.id, 900);
+    await recordVideoEvent(telegramId, "channel_click");
+    expect((await runsOf(user.id)).map((run) => run.segment)).toEqual(["A", "B", "C", "E"]);
+    businessLive.value = true;
+    try {
+      await setMaxPosition(user.id, 950);
+      const runs = await runsOf(user.id);
+      expect(runs.map((run) => run.segment)).toEqual(["A", "B", "C", "E"]);
+      expect(runs[3].endedAt).toBeNull();
+    } finally {
+      businessLive.value = false;
+    }
+  });
+
+  it("moves C to E on channel click without Business connected, without marking a real chat, keeps E on admin chat, and closes E on bought", async () => {
     const { user, telegramId } = await registeredUser();
     await recordProgress(telegramId, { position: 0, event: "play" });
     await setMaxPosition(user.id, 900);
     await recordVideoEvent(telegramId, "channel_click");
     const afterClick = await runsOf(user.id);
-    expect(afterClick.map((run) => run.segment)).toEqual(["A", "B", "C"]);
-    expect(afterClick[2].endedAt).toBeNull();
+    expect(afterClick.map((run) => run.segment)).toEqual(["A", "B", "C", "E"]);
+    expect(afterClick[2]).toMatchObject({ endReason: "advanced" });
+    expect(afterClick[3].endedAt).toBeNull();
+    const [clicked] = await db().select().from(users).where(eq(users.id, user.id));
+    expect(clicked.channelClickAt).not.toBeNull();
+    expect(clicked.wroteAdminAt).toBeNull();
 
     await markWroteAdmin(user.id, null);
     const afterChat = await runsOf(user.id);
     expect(afterChat.map((run) => run.segment)).toEqual(["A", "B", "C", "E"]);
-    expect(afterChat[2]).toMatchObject({ endReason: "advanced" });
-    expect(afterChat[2].endedAt).not.toBeNull();
     expect(afterChat[3].endedAt).toBeNull();
 
     await markPaid(user.id, null);

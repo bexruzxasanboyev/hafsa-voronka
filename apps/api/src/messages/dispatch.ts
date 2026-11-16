@@ -13,6 +13,7 @@ import {
 } from "@funnel/shared";
 import { db, rawClient } from "@/db";
 import {
+  botTexts,
   linkGrants,
   messageTemplates,
   type MessageTemplateRow,
@@ -28,8 +29,9 @@ import {
 } from "@/db/schema";
 import { processBroadcasts } from "@/broadcasts/run";
 import { env } from "@/env";
+import { clickCountsAsAdminContact } from "@/funnel/adminContact";
 import { syncSegment } from "@/funnel/segments";
-import { NO_VIDEO_MARKS, statusFor } from "@/funnel/status";
+import { contactedAdmin, NO_VIDEO_MARKS, statusFor } from "@/funnel/status";
 import { logEvent } from "@/funnel/users";
 import { refreshUserLeadCards } from "@/leads/service";
 import { type LessonState, lessonState, reopenWithin } from "@/links/service";
@@ -109,6 +111,7 @@ type Candidate = {
   watch: WatchSnapshot;
   loop: boolean;
   nightRestriction: boolean;
+  clickCounts: boolean;
 };
 
 type Pick = { candidate: Candidate; item: PlanItem<MessageTemplateRow> };
@@ -144,19 +147,27 @@ export function trackedWrap(
 }
 
 const chainAllowed = sql`not exists (select 1 from ${linkGrants} where ${linkGrants.id} = ${users.linkId} and ${linkGrants.silent})`;
+// A/B/C stop once the person contacted sales (a real chat, or a click while clicks count); E keeps sending.
+const salesChainOpen = (clickCounts: boolean) =>
+  or(
+    eq(segmentRuns.segment, "E"),
+    and(isNull(users.wroteAdminAt), clickCounts ? isNull(users.channelClickAt) : undefined),
+  );
+const RUN_STATS_CHUNK = 5000;
 
-async function loadCandidates(now: Date, userId?: number): Promise<Candidate[]> {
+async function loadCandidates(now: Date, clickCounts: boolean, userId?: number): Promise<Candidate[]> {
   const dayStart = tashkentDayStart(now).toISOString();
   const since = new Date(now.getTime() - CHAIN_MS - DAY_MS);
   const loops = await segmentLoops();
   const nightRestriction = await nightRestrictionEnabled();
   const loopingSegments = funnelSegments.filter((segment) => loops[segment]);
   const windowCondition =
-    loopingSegments.length === funnelSegments.length
-      ? undefined
-      : loopingSegments.length === 0
-        ? gt(segmentRuns.enteredAt, since)
-        : or(inArray(segmentRuns.segment, loopingSegments), gt(segmentRuns.enteredAt, since));
+    loopingSegments.length === 0
+      ? gt(segmentRuns.enteredAt, since)
+      : or(
+          gt(segmentRuns.enteredAt, since),
+          and(segmentRuns.loopEligible, inArray(segmentRuns.segment, loopingSegments)),
+        );
 
   const rows = await db()
     .select({
@@ -164,6 +175,7 @@ async function loadCandidates(now: Date, userId?: number): Promise<Candidate[]> 
       userId: segmentRuns.userId,
       segment: segmentRuns.segment,
       enteredAt: segmentRuns.enteredAt,
+      loopEligible: segmentRuns.loopEligible,
       telegramId: users.telegramId,
       linkId: users.linkId,
       linkExpiresAt: users.linkExpiresAt,
@@ -192,7 +204,7 @@ async function loadCandidates(now: Date, userId?: number): Promise<Candidate[]> 
         isNull(segmentRuns.endedAt),
         eq(users.botBlocked, false),
         isNull(users.paidAt),
-        or(eq(segmentRuns.segment, "E"), isNull(users.wroteAdminAt)),
+        salesChainOpen(clickCounts),
         notAdminTelegramId(users.telegramId),
         chainAllowed,
         windowCondition,
@@ -202,17 +214,27 @@ async function loadCandidates(now: Date, userId?: number): Promise<Candidate[]> 
   if (rows.length === 0) return [];
 
   const runIds = rows.map((row) => row.runId);
-  const sentStats = await db()
-    .select({
-      segmentRunId: sentMessages.segmentRunId,
-      slot: sentMessages.slot,
-      templateIds: sql<string[]>`coalesce(array_agg(${sentMessages.templateId}), '{}')::bigint[]`,
-      total: sql<number>`count(${sentMessages.sentAt})::int`,
-      today: sql<number>`(count(*) filter (where ${sentMessages.sentAt} >= ${dayStart}::timestamptz))::int`,
-    })
-    .from(sentMessages)
-    .where(and(inArray(sentMessages.segmentRunId, runIds), isNotNull(sentMessages.templateId)))
-    .groupBy(sentMessages.segmentRunId, sentMessages.slot);
+  const sentStats = [];
+  for (let start = 0; start < runIds.length; start += RUN_STATS_CHUNK) {
+    sentStats.push(
+      ...(await db()
+        .select({
+          segmentRunId: sentMessages.segmentRunId,
+          slot: sentMessages.slot,
+          templateIds: sql<string[]>`coalesce(array_agg(${sentMessages.templateId}), '{}')::bigint[]`,
+          total: sql<number>`count(${sentMessages.sentAt})::int`,
+          today: sql<number>`(count(*) filter (where ${sentMessages.sentAt} >= ${dayStart}::timestamptz))::int`,
+        })
+        .from(sentMessages)
+        .where(
+          and(
+            inArray(sentMessages.segmentRunId, runIds.slice(start, start + RUN_STATS_CHUNK)),
+            isNotNull(sentMessages.templateId),
+          ),
+        )
+        .groupBy(sentMessages.segmentRunId, sentMessages.slot)),
+    );
+  }
 
   const statsByRunSlot = new Map<string, { templateIds: number[]; total: number }>();
   const todayByRun = new Map<number, number>();
@@ -226,7 +248,7 @@ async function loadCandidates(now: Date, userId?: number): Promise<Candidate[]> 
 
   return rows.map((row) => {
     const linkDay = row.linkDay === null ? null : Number(row.linkDay);
-    const loop = loops[row.segment];
+    const loop = loops[row.segment] && row.loopEligible;
     const { slot } = cycleForRun(
       {
         segment: row.segment,
@@ -268,6 +290,7 @@ async function loadCandidates(now: Date, userId?: number): Promise<Candidate[]> 
       watch: { lastBeatAt: row.lastBeatAt, playing: row.playing ?? false },
       loop,
       nightRestriction,
+      clickCounts,
     };
   });
 }
@@ -283,6 +306,10 @@ async function markInterrupted(now: Date) {
         lt(sentMessages.createdAt, new Date(now.getTime() - INTERRUPTED_MS)),
       ),
     );
+}
+
+function isTransientError(error: unknown): boolean {
+  return error instanceof HttpError || (error instanceof GrammyError && error.error_code >= 500);
 }
 
 function pauseFor(error: GrammyError, now: Date) {
@@ -315,6 +342,11 @@ async function deleteSent(
     }
     if (isBlockedError(error) || (error instanceof GrammyError && error.description.includes(MESSAGE_NOT_FOUND))) {
       await mark({ deletedAt: now });
+    } else if (isTransientError(error)) {
+      // Leave the row untouched so a later tick retries; the 48h check above still caps it with too_old.
+      // A network failure ends this sweep; a 5xx may be specific to this message, so move on to the next.
+      console.error(`Deleting message ${row.id} failed, will retry:`, error);
+      return error instanceof HttpError ? "abort" : "ok";
     } else {
       await mark({ deleteError: error instanceof Error ? error.message : String(error) });
     }
@@ -324,7 +356,7 @@ async function deleteSent(
 
 async function sendOne(api: Api, pick: Pick, now: Date, pace: Pace): Promise<SendResult> {
   const { candidate, item } = pick;
-  const { userId, runId, telegramId } = candidate;
+  const { userId, runId, telegramId, clickCounts } = candidate;
   const nowIso = now.toISOString();
 
   const reserved = await db().execute<{ id: string; click_token: string }>(sql`
@@ -333,7 +365,8 @@ async function sendOne(api: Api, pick: Pick, now: Date, pace: Pace): Promise<Sen
     where exists (
         select 1 from segment_runs r join users u on u.id = r.user_id
         where r.id = ${runId} and r.ended_at is null and u.bot_blocked = false
-          and u.paid_at is null and (r.segment = 'E' or u.wrote_admin_at is null)
+          and u.paid_at is null
+          and (r.segment = 'E' or (u.wrote_admin_at is null and (not ${clickCounts} or u.channel_click_at is null)))
           and not exists (select 1 from link_grants g where g.id = u.link_id and g.silent)
       )
       and exists (
@@ -400,7 +433,7 @@ async function deliver(
       pauseFor(error, now);
       return "abort";
     }
-    if (error instanceof HttpError || (error instanceof GrammyError && error.error_code >= 500)) {
+    if (isTransientError(error)) {
       await db().delete(sentMessages).where(eq(sentMessages.id, id));
       return "retry";
     }
@@ -534,6 +567,7 @@ async function sweepExpiredLinkMessages(api: Api, now: Date, pace: Pace) {
         isNull(sentMessages.deleteError),
         isNull(sentMessages.templateId),
         isNull(sentMessages.deleteAt),
+        sql`not exists (select 1 from ${botTexts} where ${botTexts.key} = ${sentMessages.botTextKey} and ${botTexts.keepForever})`,
       ),
     )
     .orderBy(asc(sentMessages.id))
@@ -557,8 +591,13 @@ type AppointmentRow = {
   lastBeatAt: Date | null;
 };
 
-function appointmentStillValid({ appointment, user, state, lastBeatAt }: AppointmentRow): boolean {
-  if (user.botBlocked || user.paidAt !== null || user.wroteAdminAt !== null || isAdminTelegramId(user.telegramId)) {
+function appointmentStillValid({ appointment, user, state, lastBeatAt }: AppointmentRow, clickCounts: boolean): boolean {
+  if (
+    user.botBlocked ||
+    user.paidAt !== null ||
+    contactedAdmin(user, clickCounts) ||
+    isAdminTelegramId(user.telegramId)
+  ) {
     return false;
   }
   if (appointment.purpose === "reopen") return state.closed;
@@ -603,7 +642,7 @@ async function fireRemind(row: AppointmentRow, now: Date): Promise<boolean> {
   return fired !== undefined;
 }
 
-async function processAppointments(api: Api, now: Date, pace: Pace) {
+async function processAppointments(api: Api, now: Date, pace: Pace, clickCounts: boolean) {
   if (now.getTime() < pausedUntil) return;
   const dueRows = await db()
     .select({
@@ -632,10 +671,10 @@ async function processAppointments(api: Api, now: Date, pace: Pace) {
     .limit(APPOINTMENT_BATCH_SIZE);
 
   for (const dueRow of dueRows) {
-    const row: AppointmentRow = { ...dueRow, state: await lessonState(db(), dueRow.user, now) };
+    const row: AppointmentRow = { ...dueRow, state: await lessonState(db(), dueRow.user, now, clickCounts) };
     const { appointment, user } = row;
     const userId = user.id;
-    if (!appointmentStillValid(row)) {
+    if (!appointmentStillValid(row, clickCounts)) {
       await db().update(watchAppointments).set({ cancelledAt: now }).where(eq(watchAppointments.id, appointment.id));
       await refreshUserLeadCards(userId).catch((error) => console.error("Lead card refresh failed:", error));
       continue;
@@ -841,10 +880,11 @@ export async function dispatchMessages(options: DispatchOptions = {}): Promise<v
     try {
       await markInterrupted(clock());
       await sweepExpiredLinkMessages(api, clock(), pace);
-      await processAppointments(api, clock(), pace);
+      const clickCounts = await clickCountsAsAdminContact();
+      await processAppointments(api, clock(), pace, clickCounts);
       await processRollouts(api, clock(), pace);
       await processBroadcasts(api, clock(), pace);
-      const candidates = await loadCandidates(clock());
+      const candidates = await loadCandidates(clock(), clickCounts);
       await sendDue(api, clock(), pace, candidates);
       await sweepAutoDeletes(api, clock(), pace);
       await cleanupChat(api, clock(), pace);

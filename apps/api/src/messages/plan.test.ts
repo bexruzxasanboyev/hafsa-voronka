@@ -428,10 +428,11 @@ describe("30-day grid and perpetual cycle wrap", () => {
       now: "2026-11-19 01:00",
     });
     expect(cycle1.map((item) => [item.template.id, item.slot, localTime(item.sendAt)])).toEqual([
-      [101, "1", "2026-11-19T01:00"],
+      [101, "1", "2026-11-19T16:00"],
       [130, "1", "2026-12-18T10:00"],
     ]);
-    expect(pickNext(cycle1, none, T("2026-11-19 01:00"), unused)?.slot).toBe("1");
+    expect(pickNext(cycle1, none, T("2026-11-19 01:00"), unused)).toBeNull();
+    expect(pickNext(cycle1, none, T("2026-11-19 16:00"), unused)?.slot).toBe("1");
 
     const cycle2 = cycleForRun({ segment: "E", enteredAt: T("2026-10-20 15:00") }, T("2026-12-19 00:00"), true);
     expect(cycle2).toEqual({ cycleIndex: 2, slot: "2" });
@@ -444,6 +445,43 @@ describe("30-day grid and perpetual cycle wrap", () => {
     });
     expect(disabled.every((item) => item.slot === "")).toBe(true);
     expect(pickNext(disabled, none, T("2026-11-19 01:00"), unused)).toBeNull();
+  });
+
+  it("anchors looped C/E cycles to the entry time of day, not midnight", () => {
+    const relative = template({ id: 301, day: 1, timingMode: "relative", timingValue: 60 });
+    const relativeDay3 = template({ id: 303, day: 3, timingMode: "relative", timingValue: 30 });
+    const clockDay1 = template({ id: 311, day: 1, timingMode: "clock", timingValue: 9 * 60 });
+
+    const cycle0 = planChain([relative, relativeDay3, clockDay1], {
+      segment: "E",
+      enteredAt: T("2026-10-20 15:00"),
+      lastAdminChatAt: T("2026-10-20 18:00"),
+      loop: true,
+      now: T("2026-10-20 18:00"),
+    });
+    expect(cycle0.map((item) => [item.template.id, localTime(item.sendAt)])).toEqual([
+      [301, "2026-10-20T19:00"],
+      [311, "2026-10-21T09:00"],
+      [303, "2026-10-22T18:30"],
+    ]);
+
+    for (const k of [1, 2]) {
+      const cycleDay1 = new Date(T("2026-10-20 15:00").getTime() + k * 30 * 24 * 60 * MINUTE);
+      const cycle = planChain([relative, relativeDay3, clockDay1], {
+        segment: "E",
+        enteredAt: T("2026-10-20 15:00"),
+        lastAdminChatAt: T("2026-10-20 18:00"),
+        loop: true,
+        now: cycleDay1,
+      });
+      const day1Local = localTime(cycleDay1).slice(0, 10);
+      const day3Local = localTime(new Date(cycleDay1.getTime() + 2 * 24 * 60 * MINUTE)).slice(0, 10);
+      expect(cycle.map((item) => [item.template.id, item.slot, localTime(item.sendAt)])).toEqual([
+        [311, String(k), `${day1Local}T09:00`],
+        [301, String(k), `${day1Local}T16:00`],
+        [303, String(k), `${day3Local}T15:30`],
+      ]);
+    }
   });
 
   it("wraps link-bound segments after Day 30 into synthetic Day 1..30 cycle with slot 1", () => {

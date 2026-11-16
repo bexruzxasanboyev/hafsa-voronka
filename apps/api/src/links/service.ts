@@ -2,12 +2,13 @@ import { and, eq, sql } from "drizzle-orm";
 import { type FunnelStatus, type LinkGrantKind, linkBoundSegments, TEMPLATE_DAYS } from "@funnel/shared";
 import { db } from "@/db";
 import { type LinkGrant, linkGrants, type User, users, videos, watchProgress } from "@/db/schema";
+import { clickCountsAsAdminContact } from "@/funnel/adminContact";
 import { syncSegment } from "@/funnel/segments";
-import { isLessonClosed, NO_VIDEO_MARKS, segmentFor, statusFor } from "@/funnel/status";
+import { contactedAdmin, isLessonClosed, NO_VIDEO_MARKS, segmentFor, statusFor } from "@/funnel/status";
 import { logEvent } from "@/funnel/users";
 import { refreshUserLeadCards } from "@/leads/service";
 import { funnelDayAt, linkExpiryFor } from "@/messages/plan";
-import { linkTtlHours } from "@/settings/service";
+import { linkTtlHours, segmentLoops } from "@/settings/service";
 import { cancelPendingAppointments } from "./appointmentStore";
 
 type Tx = Parameters<Parameters<ReturnType<typeof db>["transaction"]>[0]>[0];
@@ -49,21 +50,31 @@ export async function insertGrant(tx: Tx, userId: number, request: GrantRequest)
   return grant;
 }
 
+/**
+ * The funnel day a new grant continues from. With `loop` the day wraps into the 30-day cycle (day 31 is
+ * cycle day 1); without it the raw day is kept, so past day 30 no reminders or triggers match (no loop).
+ */
 export async function currentFunnelDay(
   executor: Reader,
   user: Pick<User, "linkId" | "linkExpiresAt">,
   now: Date,
+  loop: boolean,
 ): Promise<number> {
   if (user.linkId === null) return 1;
   const [grant] = await executor.select({ day: linkGrants.day }).from(linkGrants).where(eq(linkGrants.id, user.linkId));
   if (!grant) return 1;
   const raw = funnelDayAt({ day: grant.day, expiresAt: user.linkExpiresAt }, now);
-  return raw > TEMPLATE_DAYS ? ((raw - 1) % TEMPLATE_DAYS) + 1 : raw;
+  return loop && raw > TEMPLATE_DAYS ? ((raw - 1) % TEMPLATE_DAYS) + 1 : raw;
 }
 
 export type LessonState = { status: FunnelStatus | null; closed: boolean };
 
-export async function lessonState(executor: Reader, user: User, now: Date): Promise<LessonState> {
+export async function lessonState(
+  executor: Reader,
+  user: User,
+  now: Date,
+  clickCounts: boolean,
+): Promise<LessonState> {
   const [row] = await executor
     .select({ progress: watchProgress, video: videos })
     .from(users)
@@ -71,7 +82,7 @@ export async function lessonState(executor: Reader, user: User, now: Date): Prom
     .leftJoin(videos, eq(videos.id, users.videoId))
     .where(eq(users.id, user.id));
   const status = statusFor(row?.progress ?? undefined, row?.video ?? NO_VIDEO_MARKS, user);
-  return { status, closed: isLessonClosed(user, status, now) };
+  return { status, closed: isLessonClosed(user, status, now, clickCounts) };
 }
 
 export type ReopenResult = "reopened" | "open" | "closed";
@@ -86,14 +97,17 @@ export async function reopenWithin(
   restart = false,
 ): Promise<ReopenResult> {
   const [user] = await tx.select().from(users).where(eq(users.id, userId)).for("update");
-  if (!user || user.registeredAt === null || user.paidAt !== null || user.wroteAdminAt !== null || user.botBlocked) {
+  const clickCounts = await clickCountsAsAdminContact(tx);
+  if (!user || user.registeredAt === null || user.paidAt !== null || contactedAdmin(user, clickCounts) || user.botBlocked) {
     return "closed";
   }
-  const state = await lessonState(tx, user, now);
+  const state = await lessonState(tx, user, now, clickCounts);
   const segment = segmentFor(state.status);
   const restartable = restart && user.completedAt === null && segment !== null && linkBoundSegments.includes(segment);
   if (!state.closed && !restartable) return "open";
-  const day = restartable ? 1 : await currentFunnelDay(tx, user, now);
+  // The reopen opens a fresh (loop-eligible) run, so the day wraps exactly when that segment loops.
+  const loop = segment !== null && (await segmentLoops())[segment];
+  const day = restartable ? 1 : await currentFunnelDay(tx, user, now, loop);
   await insertGrant(tx, userId, { kind, offerFirst: segment === "B", now, ttlHours, day });
   return "reopened";
 }

@@ -3,11 +3,12 @@ import { type FunnelSegment, linkBoundSegments } from "@funnel/shared";
 import { db } from "@/db";
 import { linkGrants, segmentRuns, users, videos, watchProgress } from "@/db/schema";
 import { cancelPendingAppointments } from "@/links/appointmentStore";
-import { endReasonFor, NO_VIDEO_MARKS, segmentFor, statusFor } from "./status";
+import { clickCountsAsAdminContact } from "./adminContact";
+import { endReasonFor, lifecycleSegmentFor, NO_VIDEO_MARKS, statusFor } from "./status";
 
 type Executor = Pick<ReturnType<typeof db>, "select">;
 
-async function snapshot(executor: Executor, userId: number) {
+async function snapshot(executor: Executor, userId: number, clickCounts: boolean) {
   const [row] = await executor
     .select({
       user: users,
@@ -26,7 +27,10 @@ async function snapshot(executor: Executor, userId: number) {
   if (!row) return undefined;
 
   const status = statusFor(row.progress ?? undefined, row.video ?? NO_VIDEO_MARKS, row.user);
-  const target: FunnelSegment | null = row.user.botBlocked ? null : segmentFor(status);
+  const derived = row.user.botBlocked ? null : lifecycleSegmentFor(status, row.user, clickCounts);
+  // E is left only by buying or blocking: someone moved to E by a click before Business went live
+  // is not pushed back into A/B/C once clicks stop counting.
+  const target: FunnelSegment | null = row.open?.segment === "E" && derived !== null ? "E" : derived;
   const attempt = row.attempt ?? 1;
   const unchanged =
     target === (row.open?.segment ?? null) &&
@@ -46,12 +50,13 @@ async function snapshot(executor: Executor, userId: number) {
 }
 
 export async function syncSegment(userId: number, now = new Date()): Promise<void> {
-  const optimistic = await snapshot(db(), userId);
+  const clickCounts = await clickCountsAsAdminContact();
+  const optimistic = await snapshot(db(), userId, clickCounts);
   if (!optimistic || optimistic.unchanged) return;
 
   await db().transaction(async (tx) => {
     await tx.execute(sql`select id from ${users} where ${users.id} = ${userId} for update`);
-    const current = await snapshot(tx, userId);
+    const current = await snapshot(tx, userId, clickCounts);
     if (!current || current.unchanged) return;
 
     if (current.open) {

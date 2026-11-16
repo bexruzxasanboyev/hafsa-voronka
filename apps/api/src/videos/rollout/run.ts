@@ -151,7 +151,7 @@ export async function restartRecipient(
       offerFirst: false,
       now,
       ttlHours,
-      day: chain || !holder ? 1 : await currentFunnelDay(tx, holder, now),
+      day: chain || !holder ? 1 : await currentFunnelDay(tx, holder, now, false),
       silent: !chain,
     });
     await tx

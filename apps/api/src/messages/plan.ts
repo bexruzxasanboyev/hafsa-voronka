@@ -198,17 +198,19 @@ function trackChain<T extends ScheduleTemplate>(
 ): PlanItem<T>[] {
   const applyNight = (date: Date) => (nightRestriction ? shiftOutOfNight(date) : date);
   const { cycleIndex, slot } = cycleForRun({ segment, enteredAt }, now, loop);
-  const firstDay = tashkentDayStart(enteredAt);
-  const cycleAnchorAt =
-    cycleIndex === 0 ? anchorAt : new Date(firstDay.getTime() + cycleIndex * TEMPLATE_DAYS * DAY_MS);
-  const cycleFirstDay = cycleIndex === 0 ? firstDay : tashkentDayStart(cycleAnchorAt);
+  const cycleShiftMs = cycleIndex * TEMPLATE_DAYS * DAY_MS;
+  const cycleFirstDay = new Date(tashkentDayStart(enteredAt).getTime() + cycleShiftMs);
+  // Looped cycles replay cycle 0 shifted by 30·k days: relative offsets keep entry's time of day,
+  // while a day-1 clock template may fire any time on the cycle's first day.
+  const relativeAnchorAt = cycleIndex === 0 ? anchorAt : new Date(enteredAt.getTime() + cycleShiftMs);
+  const clockDay1From = cycleIndex === 0 ? anchorAt : cycleFirstDay;
   return templates.map((template) => {
     const mode = template.timingMode ?? defaultTimingModeFor(segment, template.day, template.kind);
     const rawSendAt =
       mode === "relative"
-        ? new Date(cycleAnchorAt.getTime() + (template.day - 1) * DAY_MS + template.timingValue * MINUTE_MS)
+        ? new Date(relativeAnchorAt.getTime() + (template.day - 1) * DAY_MS + template.timingValue * MINUTE_MS)
         : template.day <= 1
-          ? clockSendInWindow(template.timingValue, cycleAnchorAt)
+          ? clockSendInWindow(template.timingValue, clockDay1From)
           : new Date(cycleFirstDay.getTime() + (template.day - 1) * DAY_MS + template.timingValue * MINUTE_MS);
     return { template, sendAt: applyNight(rawSendAt), slot };
   });

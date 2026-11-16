@@ -104,4 +104,8 @@ export async function recordChannelClick(
     .update(users)
     .set({ channelClickAt: now })
     .where(and(eq(users.id, user.id), isNull(users.channelClickAt)));
+  // Analytics keep a click apart from a real chat (wroteAdminAt stays null), but for the funnel a click
+  // means the person went to sales: A/B/C reminders stop and the run moves to E, as on main.
+  await syncSegment(user.id, now).catch((error) => console.error("Segment sync failed:", error));
+  await refreshUserLeadCards(user.id).catch((error) => console.error("Lead card refresh failed:", error));
 }

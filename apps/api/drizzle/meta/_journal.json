@@ -211,6 +211,13 @@
       "when": 1793320000000,
       "tag": "0029_payments_and_debts",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1794812057865,
+      "tag": "0030_segment_loop_eligibility",
+      "breakpoints": true
     }
   ]
 }

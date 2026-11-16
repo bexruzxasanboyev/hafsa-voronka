@@ -328,6 +328,53 @@ describe.skipIf(!isolatedDb.url)("Reopening a closed lesson", () => {
     expect(sentTexts()).toEqual(["Kun 4 taklif"]);
   });
 
+  it("wraps the reopened day into the 30-day cycle only when the segment loops", async () => {
+    const { settings } = await import("@/db/schema");
+    const { invalidateSettings, SETTINGS_KEYS } = await import("@/settings/service");
+    const pastDay30 = async () => {
+      const user = await closedUser();
+      await db().update(users).set({ linkExpiresAt: at(-30 * 24 * 60 - 60) }).where(eq(users.id, user.id));
+      return user;
+    };
+    try {
+      const looping = await pastDay30();
+      expect(await reopenLesson(looping.id, "again", entry)).toBe("reopened");
+      expect((await grantsOf(looping.id)).at(-1)).toMatchObject({ day: 2 });
+
+      await db()
+        .insert(settings)
+        .values({ key: SETTINGS_KEYS.segmentLoops, value: JSON.stringify({ A: false, B: true, C: true, E: true }) });
+      invalidateSettings();
+      const notLooping = await pastDay30();
+      expect(await reopenLesson(notLooping.id, "again", entry)).toBe("reopened");
+      expect((await grantsOf(notLooping.id)).at(-1)).toMatchObject({ day: 32 });
+    } finally {
+      await db().delete(settings);
+      invalidateSettings();
+    }
+  });
+
+  it("refuses a reopen after an admin-button click", async () => {
+    const user = await closedUser();
+    await db().update(users).set({ channelClickAt: at(-30) }).where(eq(users.id, user.id));
+    expect(await reopenLesson(user.id, "again", entry)).toBe("closed");
+    expect(await grantsOf(user.id)).toHaveLength(1);
+  });
+
+  it("reopens after an admin-button click once Business is live", async () => {
+    const { businessConnections } = await import("@/db/schema");
+    const user = await closedUser();
+    await db().update(users).set({ channelClickAt: at(-30) }).where(eq(users.id, user.id));
+    await db()
+      .insert(businessConnections)
+      .values({ id: "bc-reopen", userTelegramId: 1, userChatId: 1, isApproved: true, connectedAt: entry });
+    try {
+      expect(await reopenLesson(user.id, "again", entry)).toBe("reopened");
+    } finally {
+      await db().delete(businessConnections);
+    }
+  });
+
   it("reopens once under concurrent taps", async () => {
     const user = await closedUser();
     const results = await Promise.all([reopenLesson(user.id, "again"), reopenLesson(user.id, "screen")]);

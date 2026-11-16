@@ -1,7 +1,9 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { type User, users, watchAppointments } from "@/db/schema";
+import { clickCountsAsAdminContact } from "@/funnel/adminContact";
 import { isSlotOpen, preReminderAt } from "@/funnel/laterPicker";
+import { contactedAdmin } from "@/funnel/status";
 import { logEvent } from "@/funnel/users";
 import { refreshUserLeadCards } from "@/leads/service";
 import { cancelPendingAppointments } from "./appointmentStore";
@@ -16,8 +18,11 @@ export type LaterContext =
 export type ScheduleResult = "scheduled" | "unavailable" | "closed";
 
 export async function laterContextFor(executor: Reader, user: User, now: Date): Promise<LaterContext | null> {
-  if (user.registeredAt === null || user.paidAt !== null || user.wroteAdminAt !== null || user.botBlocked) return null;
-  const state = await lessonState(executor, user, now);
+  const clickCounts = await clickCountsAsAdminContact(executor);
+  if (user.registeredAt === null || user.paidAt !== null || contactedAdmin(user, clickCounts) || user.botBlocked) {
+    return null;
+  }
+  const state = await lessonState(executor, user, now, clickCounts);
   if (state.closed) return { purpose: "reopen", expiresAt: null };
   const live = user.linkExpiresAt !== null && user.linkExpiresAt.getTime() > now.getTime();
   return { purpose: "remind", expiresAt: live ? user.linkExpiresAt : null };

@@ -7,6 +7,7 @@ import { closeDb, db } from "@/db";
 import { runMigrations } from "@/db/migrate";
 import {
   botTexts,
+  businessConnections,
   events,
   linkGrants,
   messageTemplates,
@@ -104,6 +105,7 @@ describe.skipIf(!testDbUrl)("Message dispatcher", () => {
     testIndex += 1;
     entry = new Date(Date.UTC(2027, 0, 5, 5, 0, 0) + testIndex * 40 * DAY);
     await db().delete(watchAppointments);
+    await db().delete(businessConnections);
     await db().delete(sentMessages);
     await db().delete(events);
     await db().delete(segmentRuns);
@@ -317,6 +319,54 @@ describe.skipIf(!testDbUrl)("Message dispatcher", () => {
     expect(first.deletedAt).toBeNull();
     expect(first.deleteError).toContain("can't be deleted");
     expect(sends()).toHaveLength(2);
+  });
+
+  it("retries an auto-delete after a network or server error", async () => {
+    await setup({ position: 0, autoDeleteMinutes: 60 });
+    await tick(at(60));
+    injections.push({ method: "deleteMessage", error_code: 502, description: "Bad Gateway" });
+    await tick(at(120));
+    const [failed] = await rows();
+    expect(failed.deletedAt).toBeNull();
+    expect(failed.deleteError).toBeNull();
+    await tick(at(121));
+    const [retried] = await rows();
+    expect(retried.deletedAt).toEqual(at(121));
+    expect(deletes()).toHaveLength(2);
+  });
+
+  it("gives up retrying an auto-delete once the message is 48 hours old", async () => {
+    await setup({ position: 0, autoDeleteMinutes: 60 });
+    await tick(at(60));
+    injections.push({ method: "deleteMessage", error_code: 500, description: "Internal Server Error" });
+    await tick(at(120));
+    calls.length = 0;
+    await tick(at(60 + 48 * 60));
+    const [row] = await rows();
+    expect(row.deleteError).toBe("too_old");
+    expect(deletes()).toHaveLength(0);
+  });
+
+  it("keeps keep-forever bot texts when the link expires", async () => {
+    const { user, grant, run } = await linkedRunUser("A", at(24 * 60));
+    await db().insert(botTexts).values({ key: "reopenNow", keepForever: true });
+    invalidateBotTexts();
+    const sentRow = (key: string, telegramMessageId: number) =>
+      db()
+        .insert(sentMessages)
+        .values({
+          userId: user.id,
+          botTextKey: key,
+          linkId: grant.id,
+          segmentRunId: run.id,
+          dueAt: at(23 * 60),
+          sentAt: at(23 * 60),
+          telegramMessageId,
+        });
+    await sentRow("reopenNow", 601);
+    await sentRow("remindNow", 602);
+    await tick(at(25 * 60));
+    expect(deletes().map((call) => call.payload.message_id)).toEqual([602]);
   });
 
   it("caps sends at ten per local day and resets on the next day", async () => {
@@ -575,9 +625,67 @@ describe.skipIf(!testDbUrl)("Message dispatcher", () => {
       expect(after.wroteAdminAt).toBeNull();
       const channelEvents = await db().select().from(events).where(eq(events.type, "channel_click"));
       expect(channelEvents).toHaveLength(1);
-      const [stillOpen] = await db().select().from(segmentRuns).where(eq(segmentRuns.id, run.id));
-      expect(stillOpen.endedAt).toBeNull();
-      expect(stillOpen.endReason).toBeNull();
+      const [ended] = await db().select().from(segmentRuns).where(eq(segmentRuns.id, run.id));
+      expect(ended.endReason).toBe("advanced");
+    });
+
+    it("stops A/B/C reminders after an admin button click and moves the person to E", async () => {
+      const { row, user } = await sendWithButtons();
+      await makeTemplate({ text: "Keyingi", position: 1, timingValue: 90 });
+      await makeTemplate({ segment: "E", text: "E_D1", timingMode: "relative", timingValue: 600 });
+      expect((await app.request(`/r/${row.clickToken}/0`)).status).toBe(302);
+      calls.length = 0;
+      await tick(at(90));
+      expect(sends()).toHaveLength(0);
+      const runs = await db().select().from(segmentRuns).where(eq(segmentRuns.userId, user.id)).orderBy(segmentRuns.id);
+      expect(runs.map((r) => [r.segment, r.endReason])).toEqual([
+        ["A", "advanced"],
+        ["E", null],
+      ]);
+    });
+
+    it("never sends A/B/C reminders to a stale open run once channelClickAt is set", async () => {
+      const { user } = await setup({ text: "A_D1" });
+      await db().update(users).set({ channelClickAt: at(10) }).where(eq(users.id, user.id));
+      await tick(at(60));
+      expect(sends()).toHaveLength(0);
+    });
+
+    async function connectBusiness(values: Partial<typeof businessConnections.$inferInsert> = {}) {
+      await db()
+        .insert(businessConnections)
+        .values({ id: `bc-${testIndex}`, userTelegramId: 1, userChatId: 1, isApproved: true, connectedAt: entry, ...values });
+    }
+
+    it("keeps A/B/C reminders going after a click while Business is live, until a real chat", async () => {
+      await connectBusiness();
+      const { row, user, run } = await sendWithButtons();
+      await makeTemplate({ text: "Keyingi", position: 1, timingValue: 90 });
+      expect((await app.request(`/r/${row.clickToken}/0`)).status).toBe(302);
+      const [clicked] = await db().select().from(users).where(eq(users.id, user.id));
+      expect(clicked.channelClickAt).not.toBeNull();
+      const [open] = await db().select().from(segmentRuns).where(eq(segmentRuns.id, run.id));
+      expect(open.endedAt).toBeNull();
+      calls.length = 0;
+      await tick(at(90));
+      expect(sends().map((call) => call.payload.text)).toEqual(["Keyingi"]);
+    });
+
+    it("sends to a clicked user's open A run while Business is live", async () => {
+      await connectBusiness();
+      const { user } = await setup({ text: "A_D1" });
+      await db().update(users).set({ channelClickAt: at(10) }).where(eq(users.id, user.id));
+      await tick(at(60));
+      expect(sends().map((call) => call.payload.text)).toEqual(["A_D1"]);
+    });
+
+    it("lets clicks count again when the only Business connection is disabled or unapproved", async () => {
+      await connectBusiness({ isEnabled: false });
+      await connectBusiness({ id: `bc-${testIndex}-pending`, isApproved: false });
+      const { user } = await setup({ text: "A_D1" });
+      await db().update(users).set({ channelClickAt: at(10) }).where(eq(users.id, user.id));
+      await tick(at(60));
+      expect(sends()).toHaveLength(0);
     });
 
     it("rejects unknown tokens and indexes", async () => {
@@ -869,12 +977,34 @@ describe.skipIf(!testDbUrl)("Message dispatcher", () => {
       expect((await rows()).map((row) => row.slot)).toEqual(["", ""]);
 
       await tick(at(30 * 24 * 60 - 9 * 60));
+      expect(sends()).toHaveLength(2);
+      await tick(at(30 * 24 * 60 + 60));
       expect(sends().map((call) => call.payload.text)).toEqual(["C_D1", "C_D30", "C_D1"]);
       expect((await rows())[2].slot).toBe("1");
 
       await markPaid(user.id, { id: 999 }, at(30 * 24 * 60));
       await tick(at(60 * 24 * 60 - 9 * 60));
       expect(sends()).toHaveLength(3);
+    });
+
+    it("never loops runs opened before loops shipped and keeps them out of the candidate window", async () => {
+      const user = await makeUser({ offerWatchedAt: entry });
+      const [legacy] = await db()
+        .insert(segmentRuns)
+        .values({ userId: user.id, segment: "C", enteredAt: entry, loopEligible: false })
+        .returning();
+      await makeTemplate({ segment: "C", day: 1, text: "C_D1", timingMode: "relative", timingValue: 60 });
+      await tick(at(60));
+      await tick(at(30 * 24 * 60 + 60));
+      await tick(at(60 * 24 * 60 + 60));
+      expect(sends().map((call) => call.payload.text)).toEqual(["C_D1"]);
+      expect((await rows()).map((row) => row.segmentRunId)).toEqual([legacy.id]);
+    });
+
+    it("defaults new segment runs to loop-eligible", async () => {
+      const user = await makeUser();
+      const run = await openRun(user.id, "A");
+      expect(run.loopEligible).toBe(true);
     });
 
     it("loops link-bound segments after Day 30 when enabled and stops when loop is disabled", async () => {
