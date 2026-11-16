@@ -1,3 +1,24 @@
+-- Production briefly ran a parallel TZ_4 implementation (0027_peaceful_lucky_pierre, commit c1bddfe,
+-- kept on branch archive/devst200-tz4). Its objects were verified empty on 2026-11-16. Drop them so this
+-- migration lineage applies cleanly; refuse if any of them hold data. A no-op on every other database.
+DO $$
+DECLARE
+  t text;
+  has_rows boolean;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['payments', 'enrollments', 'tariffs', 'study_groups', 'courses'] LOOP
+    IF to_regclass('public.' || t) IS NOT NULL THEN
+      EXECUTE format('SELECT EXISTS (SELECT 1 FROM public.%I)', t) INTO has_rows;
+      IF has_rows THEN
+        RAISE EXCEPTION 'Parallel TZ_4 table % contains data; migrate it before applying 0027_business_chat_lifecycle', t;
+      END IF;
+    END IF;
+  END LOOP;
+END $$;--> statement-breakpoint
+DROP TABLE IF EXISTS "payments", "enrollments", "tariffs", "study_groups", "courses" CASCADE;--> statement-breakpoint
+ALTER TABLE "bot_texts" DROP COLUMN IF EXISTS "scheduled_at", DROP COLUMN IF EXISTS "scheduled_sent_at", DROP COLUMN IF EXISTS "auto_delete_minutes";--> statement-breakpoint
+ALTER TABLE "message_templates" DROP COLUMN IF EXISTS "timing_mode", DROP COLUMN IF EXISTS "auto_delete_minutes";--> statement-breakpoint
+ALTER TABLE "sent_messages" DROP COLUMN IF EXISTS "delete_at";--> statement-breakpoint
 ALTER TABLE "users" ADD COLUMN "last_admin_chat_at" timestamp with time zone;--> statement-breakpoint
 ALTER TABLE "users" ADD COLUMN "paid_at" timestamp with time zone;--> statement-breakpoint
 ALTER TABLE "users" ADD COLUMN "paid_by" bigint;--> statement-breakpoint
