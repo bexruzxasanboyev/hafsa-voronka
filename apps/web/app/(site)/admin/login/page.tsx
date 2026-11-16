@@ -7,10 +7,12 @@ import { Button } from "@/components/admin/ui/Button";
 import { Field, Input } from "@/components/admin/ui/Field";
 import { Notice } from "@/components/admin/ui/Notice";
 import { LoadingState } from "@/components/admin/ui/States";
+import { loginErrorMessage } from "@/lib/admin/accounts";
 import { adminUz } from "@/lib/i18n/admin";
 
 export default function AdminLoginPage() {
   const router = useRouter();
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [checking, setChecking] = useState(true);
@@ -18,9 +20,9 @@ export default function AdminLoginPage() {
 
   useEffect(() => {
     let mounted = true;
-    void adminMe().then((isLoggedIn) => {
+    void adminMe().then((session) => {
       if (!mounted) return;
-      if (isLoggedIn) {
+      if (session.ok) {
         router.replace("/admin");
       } else {
         setChecking(false);
@@ -33,24 +35,18 @@ export default function AdminLoginPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!password || loading) return;
+    if (!username.trim() || !password || loading) return;
 
     setLoading(true);
     setError(null);
 
-    const result = await adminLogin(password);
+    const result = await adminLogin(username, password);
     if (result.ok) {
       router.replace("/admin");
       return;
     }
 
-    if (result.status === 401) {
-      setError(adminUz.login.errors.wrongPassword);
-    } else if (result.status === 429) {
-      setError(adminUz.login.errors.rateLimited);
-    } else {
-      setError(adminUz.login.errors.generic);
-    }
+    setError(loginErrorMessage(result));
     setLoading(false);
   };
 
@@ -75,13 +71,31 @@ export default function AdminLoginPage() {
         <form onSubmit={handleSubmit} className="mx-auto flex w-full max-w-sm flex-col gap-4 rounded-[20px] bg-white p-5 sm:p-6">
           <p className="m-0 text-sm text-qalam">{adminUz.login.subtitle}</p>
 
+          <Field label={adminUz.login.usernameLabel}>
+            {({ id }) => (
+              <Input
+                id={id}
+                type="text"
+                autoFocus
+                required
+                autoComplete="username"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                value={username}
+                placeholder={adminUz.login.usernamePlaceholder}
+                onChange={(e) => setUsername(e.target.value)}
+              />
+            )}
+          </Field>
+
           <Field label={adminUz.login.passwordLabel}>
             {({ id }) => (
               <Input
                 id={id}
                 type="password"
-                autoFocus
                 required
+                autoComplete="current-password"
                 value={password}
                 placeholder={adminUz.login.passwordPlaceholder}
                 onChange={(e) => setPassword(e.target.value)}
@@ -91,7 +105,7 @@ export default function AdminLoginPage() {
 
           {error && <Notice tone="danger">{error}</Notice>}
 
-          <Button type="submit" block disabled={!password} loading={loading} loadingLabel={adminUz.login.submitting}>
+          <Button type="submit" block disabled={!username.trim() || !password} loading={loading} loadingLabel={adminUz.login.submitting}>
             {adminUz.login.submitButton}
           </Button>
         </form>

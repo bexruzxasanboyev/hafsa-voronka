@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { asc, eq } from "drizzle-orm";
 import type { Bot } from "grammy";
 import type { BroadcastAudience, FunnelSegment } from "@funnel/shared";
-import { hashPassword } from "@/admin/auth";
+import { hashPassword } from "@/admin/password";
 import { closeDb, db } from "@/db";
 import { runMigrations } from "@/db/migrate";
 import {
@@ -52,7 +52,6 @@ describe.skipIf(!isolatedDb.url)("Scheduled broadcasts", () => {
     await isolatedDb.create();
     setTestEnv({
       DATABASE_URL: isolatedDb.url!,
-      SESSION_SECRET: "broadcasts-session-secret-0123456789abcdef",
       ADMIN_PASSWORD_HASH: await hashPassword(TEST_PASSWORD),
       ADMIN_TELEGRAM_IDS: String(ADMIN_ID),
       LEADS_CHAT_ID,
@@ -98,7 +97,7 @@ describe.skipIf(!isolatedDb.url)("Scheduled broadcasts", () => {
     const login = await app.request("/admin/login", {
       method: "POST",
       headers: { "content-type": "application/json", "cf-connecting-ip": "203.0.113.88" },
-      body: JSON.stringify({ password: TEST_PASSWORD }),
+      body: JSON.stringify({ username: "admin", password: TEST_PASSWORD }),
     });
     cookie = login.headers.get("set-cookie")!.split(";")[0];
   });

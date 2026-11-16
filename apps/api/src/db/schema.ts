@@ -942,3 +942,33 @@ export const payments = pgTable(
 );
 
 export type PaymentRow = typeof payments.$inferSelect;
+
+export const adminUsers = pgTable("admin_users", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  /** Always stored lowercase (see adminUsernameSchema). */
+  username: text("username").notNull().unique(),
+  passwordHash: text("password_hash").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
+  passwordChangedAt: timestamp("password_changed_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export type AdminUserRow = typeof adminUsers.$inferSelect;
+
+export const adminSessions = pgTable(
+  "admin_sessions",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    adminUserId: bigint("admin_user_id", { mode: "number" })
+      .notNull()
+      .references(() => adminUsers.id, { onDelete: "cascade" }),
+    /** sha256 hex of the bearer token; the raw token is never stored. */
+    tokenHash: text("token_hash").notNull().unique(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).defaultNow().notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  },
+  (t) => [index("admin_sessions_admin_user_idx").on(t.adminUserId)],
+);

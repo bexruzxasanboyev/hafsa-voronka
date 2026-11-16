@@ -1,9 +1,9 @@
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { hashPassword } from "@/admin/auth";
 import { closeDb, db } from "@/db";
 import { runMigrations } from "@/db/migrate";
 import { botTexts, chatMessages } from "@/db/schema";
+import { seedTestAdmin } from "@/test/admin";
 import { setTestEnv } from "@/test/env";
 
 const testDbUrl = process.env.TEST_DATABASE_URL;
@@ -24,8 +24,6 @@ describe.skipIf(!testDbUrl)("Editable bot texts", () => {
   beforeAll(async () => {
     setTestEnv({
       DATABASE_URL: testDbUrl!,
-      ADMIN_PASSWORD_HASH: await hashPassword(PASSWORD),
-      SESSION_SECRET: "bot-texts-session-secret-0123456789abcdef",
       LEADS_CHAT_ID,
       LEADS_THREAD_ID: String(LEADS_THREAD_ID),
     });
@@ -45,10 +43,12 @@ describe.skipIf(!testDbUrl)("Editable bot texts", () => {
     });
     app = (await import("@/app")).createApp();
 
+    const username = await seedTestAdmin(PASSWORD);
+
     const login = await app.request("/admin/login", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ password: PASSWORD }),
+      body: JSON.stringify({ username, password: PASSWORD }),
     });
     cookie = login.headers.get("set-cookie")!.split(";")[0];
   });

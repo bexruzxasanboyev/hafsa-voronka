@@ -50,7 +50,7 @@ describe.skipIf(!isolatedDb.url)("«Keyinroq» time picker and appointments", ()
 
   beforeAll(async () => {
     await isolatedDb.create();
-    setTestEnv({ DATABASE_URL: isolatedDb.url!, SESSION_SECRET: "appointments-session-secret-0123456789" });
+    setTestEnv({ DATABASE_URL: isolatedDb.url! });
     await runMigrations(isolatedDb.url!);
     testBot = (await import("@/telegram/bot")).bot();
     testBot.botInfo = {

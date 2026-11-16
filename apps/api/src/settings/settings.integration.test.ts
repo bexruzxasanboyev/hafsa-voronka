@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
-import { hashPassword } from "@/admin/auth";
+import { hashPassword } from "@/admin/password";
 import { closeDb, db } from "@/db";
 import { runMigrations } from "@/db/migrate";
 import {
@@ -26,7 +26,6 @@ describe.skipIf(!database.url)("Admin settings", () => {
     setTestEnv({
       DATABASE_URL: database.url!,
       ADMIN_PASSWORD_HASH: await hashPassword(PASSWORD),
-      SESSION_SECRET: "settings-session-secret-0123456789abcdef",
     });
     await runMigrations(database.url!);
     app = (await import("@/app")).createApp();
@@ -34,7 +33,7 @@ describe.skipIf(!database.url)("Admin settings", () => {
     const login = await app.request("/admin/login", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ password: PASSWORD }),
+      body: JSON.stringify({ username: "admin", password: PASSWORD }),
     });
     cookie = login.headers.get("set-cookie")!.split(";")[0];
   });

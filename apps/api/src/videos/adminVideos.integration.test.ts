@@ -3,13 +3,12 @@ import { eq, inArray } from "drizzle-orm";
 import { closeDb, db } from "@/db";
 import { runMigrations } from "@/db/migrate";
 import { users, videos } from "@/db/schema";
-import { hashPassword } from "@/admin/auth";
 import { setR2ForTests, type R2Part, type R2Store } from "@/storage/r2";
+import { seedTestAdmin } from "@/test/admin";
 import { createTestVideo, ensureActiveTestVideo } from "@/test/videos";
 
 const testDbUrl = process.env.TEST_DATABASE_URL;
 const TEST_PASSWORD = "test-admin-password-2026";
-const SESSION_SECRET = "supersecret-session-secret-key-32chars!!";
 const PUBLIC_BASE = "https://video.example.com";
 const MIB = 1024 * 1024;
 
@@ -66,8 +65,6 @@ describe.skipIf(!testDbUrl)("Admin videos integration", () => {
       DATABASE_URL: testDbUrl,
       CHANNEL_URL: "https://t.me/example",
       VIDEO_POSTER_URL: "https://video.example.com/poster.webp",
-      ADMIN_PASSWORD_HASH: await hashPassword(TEST_PASSWORD),
-      SESSION_SECRET,
       R2_ACCOUNT_ID: "acc",
       R2_BUCKET: "funnel-video",
       R2_ACCESS_KEY_ID: "key",
@@ -80,10 +77,12 @@ describe.skipIf(!testDbUrl)("Admin videos integration", () => {
     setR2ForTests(store);
     app = (await import("@/app")).createApp();
 
+    const username = await seedTestAdmin(TEST_PASSWORD);
+
     const login = await app.request("/admin/login", {
       method: "POST",
       headers: { "content-type": "application/json", "cf-connecting-ip": `203.0.113.${Date.now() % 250}` },
-      body: JSON.stringify({ password: TEST_PASSWORD }),
+      body: JSON.stringify({ username, password: TEST_PASSWORD }),
     });
     token = ((await login.json()) as { token: string }).token;
   });

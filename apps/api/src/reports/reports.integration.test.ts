@@ -2,10 +2,10 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import postgres from "postgres";
 import readExcelFile from "read-excel-file/node";
-import { hashPassword } from "@/admin/auth";
 import { closeDb, db } from "@/db";
 import { runMigrations } from "@/db/migrate";
 import { events, messageTemplates, segmentRuns, sentMessages, users, videos, watchProgress } from "@/db/schema";
+import { seedTestAdmin } from "@/test/admin";
 import { setTestEnv } from "@/test/env";
 import { createTestVideo } from "@/test/videos";
 
@@ -34,16 +34,16 @@ describe.skipIf(!testDbUrl)("Admin reports", () => {
     await admin.end();
     setTestEnv({
       DATABASE_URL: testDbUrl!,
-      ADMIN_PASSWORD_HASH: await hashPassword(PASSWORD),
-      SESSION_SECRET: "reports-session-secret-0123456789abcdef",
     });
     await runMigrations(testDbUrl!);
     app = (await import("@/app")).createApp();
 
+    const username = await seedTestAdmin(PASSWORD);
+
     const login = await app.request("/admin/login", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ password: PASSWORD }),
+      body: JSON.stringify({ username, password: PASSWORD }),
     });
     cookie = login.headers.get("set-cookie")!.split(";")[0];
     token = ((await login.json()) as { token: string }).token;

@@ -5,14 +5,20 @@ import {
   adminStatsQuerySchema,
 } from "@funnel/shared";
 import {
+  findAdminByUsername,
+  recordLogin,
+} from "@/admin/accounts";
+import {
+  type AdminEnv,
   clearAdminSessionCookie,
-  getAdminPasswordHash,
+  createAdminSession,
   requireAdminAuth,
   requireAdminConfig,
+  resolveAdminSession,
+  revokePresentedSessions,
   setAdminSessionCookie,
-  verifyAdminSession,
-  verifyPassword,
 } from "@/admin/auth";
+import { verifyAgainstDummy, verifyPassword } from "@/admin/password";
 import { resolveDateRange } from "@/admin/dates";
 import {
   getCampaignStats,
@@ -27,6 +33,7 @@ import {
 } from "@/admin/queries";
 import { clientIp } from "@/http/clientIp";
 import { consumeRateLimit } from "@/http/rateLimit";
+import { adminAccountRoutes } from "@/routes/adminAccounts";
 import { adminBotTextRoutes } from "@/routes/adminBotTexts";
 import { adminBroadcastRoutes } from "@/routes/adminBroadcasts";
 import { adminLinkRoutes } from "@/routes/adminLinks";
@@ -36,10 +43,11 @@ import { adminPaymentRoutes } from "@/routes/adminPayments";
 import { adminReportRoutes } from "@/routes/adminReports";
 import { adminSettingsRoutes } from "@/routes/adminSettings";
 
-export const adminRoutes = new Hono();
+export const adminRoutes = new Hono<AdminEnv>();
 
 adminRoutes.use("*", requireAdminConfig);
 
+adminRoutes.route("/", adminAccountRoutes);
 adminRoutes.route("/bot-texts", adminBotTextRoutes);
 adminRoutes.route("/broadcasts", adminBroadcastRoutes);
 adminRoutes.route("/links", adminLinkRoutes);
@@ -62,27 +70,35 @@ adminRoutes.post("/login", async (c) => {
     return c.json({ error: "invalid_request" }, 400);
   }
 
-  const hash = getAdminPasswordHash();
-  const valid = await verifyPassword(parsed.data.password, hash!);
-  if (!valid) {
-    return c.json({ error: "unauthorized" }, 401);
+  const { username, password } = parsed.data;
+  if (!(await consumeRateLimit(`login-user:${username}`, 10, 900))) {
+    return c.json({ error: "rate_limited" }, 429);
   }
 
-  const token = await setAdminSessionCookie(c);
-  return c.json({ ok: true, token });
+  const admin = await findAdminByUsername(username);
+  const valid = admin ? await verifyPassword(password, admin.passwordHash) : await verifyAgainstDummy(password);
+  if (!admin || !valid) {
+    return c.json({ error: "invalid_credentials" }, 401);
+  }
+
+  const token = await createAdminSession(admin.id);
+  await recordLogin(admin.id);
+  setAdminSessionCookie(c, token);
+  return c.json({ ok: true, token, admin: { id: admin.id, username: admin.username } });
 });
 
-adminRoutes.post("/logout", (c) => {
+adminRoutes.post("/logout", async (c) => {
+  await revokePresentedSessions(c);
   clearAdminSessionCookie(c);
   return c.json({ ok: true });
 });
 
 adminRoutes.get("/me", async (c) => {
-  const valid = await verifyAdminSession(c);
-  if (!valid) {
+  const session = await resolveAdminSession(c);
+  if (!session) {
     return c.json({ error: "unauthorized" }, 401);
   }
-  return c.json({ ok: true });
+  return c.json({ ok: true, admin: session.admin });
 });
 
 adminRoutes.get("/stats", requireAdminAuth, async (c) => {

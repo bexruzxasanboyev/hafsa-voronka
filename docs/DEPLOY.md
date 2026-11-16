@@ -151,7 +151,7 @@ Runs the API, Postgres and the local Telegram Bot API server with Docker Compose
    cp deploy/.env.prod.example deploy/.env.prod
    chmod 600 deploy/.env.prod
    ```
-   Fill `deploy/.env.prod`. Keep `ADMIN_PASSWORD_HASH` and `GOOGLE_SA_KEY` in **single quotes**: Docker Compose expands `$` in env files, and the hash contains `$`. `DATABASE_URL` is built from the `POSTGRES_*` values, do not set it.
+   Fill `deploy/.env.prod`. Keep `ADMIN_PASSWORD_HASH` (first-admin bootstrap, see section 8) and `GOOGLE_SA_KEY` in **single quotes**: Docker Compose expands `$` in env files, and the hash contains `$`. `DATABASE_URL` is built from the `POSTGRES_*` values, do not set it.
 5. First start: `./deploy/deploy.sh`. Migrations run when the API starts; the script waits for `https://<API_DOMAIN>/health`.
 6. Point the bot at the server (once, and after any domain change), using the running container's env:
    ```bash
@@ -358,27 +358,37 @@ From the downloaded JSON key file:
 
 ---
 
-## 8. Admin Security & Credentials
+## 8. Admin accounts
 
-### Password Hash Generation
+Admins are rows in `admin_users` (username + scrypt hash). Sessions live in `admin_sessions` (7 days, revocable); only a SHA-256 of each session token is stored.
 
-Generate a secure hash for the admin dashboard password:
+### First deploy: bootstrap from the old password
 
-```bash
-pnpm --filter @funnel/api hash-password
-```
+On boot, after migrations, if `admin_users` is empty and `ADMIN_PASSWORD_HASH` is set, the API creates one admin named `ADMIN_USERNAME` (default `admin`) with that hash. The existing password keeps working, now with username `admin`. Sessions from the old scheme stop working, so every admin logs in once after the deploy.
 
-Set the output hash as `ADMIN_PASSWORD_HASH` in `deploy/.env.prod`.
-
-### Session Secret Generation
-
-Generate a cryptographically secure random session secret (minimum 32 characters):
+Verify after the first deploy:
 
 ```bash
-openssl rand -base64 48
+docker compose --env-file deploy/.env.prod -f deploy/docker-compose.prod.yml logs api | grep "Admin bootstrap"
+docker compose --env-file deploy/.env.prod -f deploy/docker-compose.prod.yml exec postgres \
+  sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "select id, username, created_at, last_login_at from admin_users"'
 ```
 
-Set the generated string as `SESSION_SECRET` in `deploy/.env.prod`.
+The bootstrap runs only while the table is empty; afterwards `ADMIN_PASSWORD_HASH` is ignored. `SESSION_SECRET` is no longer used at all. Both may stay in `deploy/.env.prod` (they still parse) or be removed once the admin row exists. For a fresh install, generate the bootstrap hash with `pnpm --filter @funnel/api hash-password`, or skip it and create the first admin with the reset command below.
+
+### Adding admins and changing passwords
+
+Signed-in admins add and remove other admins and change their own password in the admin panel's Settings page. Passwords need at least 10 characters. Changing a password signs out that admin's other sessions. Removing an admin signs them out everywhere. You cannot remove yourself or the last admin.
+
+### Forgotten password
+
+Run on the server. The command prompts twice for the new password (hidden), creates the admin if the username does not exist, and signs out all of that admin's sessions:
+
+```bash
+docker compose --env-file deploy/.env.prod -f deploy/docker-compose.prod.yml exec api node dist/admin-reset-password.js admin
+```
+
+Without a TTY it reads the password from the first line of stdin (`exec -T api node dist/admin-reset-password.js admin < password.txt`). Locally: `pnpm --filter @funnel/api admin:reset-password <username>` (uses `DATABASE_URL` from `apps/api/.env`).
 
 ---
 
@@ -559,8 +569,9 @@ Comprehensive reference for all environment variables used by the API and Web ap
 | `FB_PIXEL_ID` | API (`apps/api`) | Optional | `123456789012345` | Meta Pixel dataset / pixel identifier |
 | `FB_CAPI_TOKEN` | API (`apps/api`) | Optional | `EAAG...` | Meta Conversions API system user access token |
 | `FB_TEST_EVENT_CODE` | API (`apps/api`) | Optional | `TEST12345` | Meta test code for server-side event verification |
-| `ADMIN_PASSWORD_HASH` | API (`apps/api`) | Optional | `$2a$10$...` | Hash generated via `pnpm --filter @funnel/api hash-password` |
-| `SESSION_SECRET` | API (`apps/api`) | Optional | `openssl rand -base64 48` string | Secret key for signing admin session cookies (min 32 chars) |
+| `ADMIN_PASSWORD_HASH` | API (`apps/api`) | Optional | `'scrypt$...'` | One-time bootstrap: seeds the first admin while `admin_users` is empty, ignored afterwards (see section 8). Generate with `pnpm --filter @funnel/api hash-password` |
+| `ADMIN_USERNAME` | API (`apps/api`) | Optional | `admin` (default) | Username of the bootstrapped admin |
+| `SESSION_SECRET` | API (`apps/api`) | Legacy, unused | | No longer used (sessions are stored in the database). Still accepted so old env files parse |
 | `LEADS_CHAT_ID` | API (`apps/api`) | Optional | `-1001234567890` | Telegram chat id or `@channelname` that receives new-lead notifications |
 | `LEADS_THREAD_ID` | API (`apps/api`) | Optional | `5` | Topic (thread) id inside `LEADS_CHAT_ID` for lead notifications |
 | `LINK_TTL_HOURS` / `MESSAGE_CAPS` | Admin panel (Sozlamalar), stored in the `settings` table | Not env variables | `24` / per-audience caps | Link lifetime in hours (default 24, 1 to 720) and daily/total message caps per audience. Changing either needs no redeploy |

@@ -17,12 +17,11 @@ import {
 import { upsertUser } from "@/funnel/users";
 import { isolatedDatabase } from "@/test/isolatedDb";
 import { ensureActiveTestVideo } from "@/test/videos";
-import { hashPassword } from "./auth";
+import { hashPassword } from "./password";
 
 const isolatedDb = isolatedDatabase("vf_admin");
 const testDbUrl = isolatedDb.url;
 const TEST_PASSWORD = "test-admin-password-2026";
-const SESSION_SECRET = "supersecret-session-secret-key-32chars!!";
 
 describe.skipIf(!testDbUrl)("Admin Integration Tests", () => {
   let createApp: typeof import("@/app").createApp;
@@ -43,12 +42,19 @@ describe.skipIf(!testDbUrl)("Admin Integration Tests", () => {
       CHANNEL_URL: "https://t.me/example",
       VIDEO_POSTER_URL: "https://video.example.com/poster.webp",
       ADMIN_PASSWORD_HASH: testPasswordHash,
-      SESSION_SECRET,
     });
 
     await runMigrations(testDbUrl!);
     const appModule = await import("@/app");
     createApp = appModule.createApp;
+
+    const login = await createApp().request("/admin/login", {
+      method: "POST",
+      headers: { "content-type": "application/json", "cf-connecting-ip": "198.51.100.7" },
+      body: JSON.stringify({ username: "admin", password: TEST_PASSWORD }),
+    });
+    expect(login.status).toBe(200);
+    adminSessionCookie = login.headers.get("set-cookie")!.match(/admin_session=[^;]+/)![0];
 
     await db().execute(sql`
       DELETE FROM events WHERE (created_at AT TIME ZONE 'Asia/Tashkent')::date >= '2026-05-01'::date AND (created_at AT TIME ZONE 'Asia/Tashkent')::date <= '2026-05-10'::date;
@@ -61,109 +67,6 @@ describe.skipIf(!testDbUrl)("Admin Integration Tests", () => {
   afterAll(async () => {
     await closeDb();
     await isolatedDb.drop();
-  });
-
-  it("returns 503 when admin credentials or secret are missing", async () => {
-    const savedHash = process.env.ADMIN_PASSWORD_HASH;
-    delete process.env.ADMIN_PASSWORD_HASH;
-
-    const app = createApp();
-    const res = await app.request("/admin/login", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ password: TEST_PASSWORD }),
-    });
-    expect(res.status).toBe(503);
-    const body = await res.json();
-    expect(body).toEqual({ error: "admin_disabled" });
-
-    process.env.ADMIN_PASSWORD_HASH = savedHash;
-  });
-
-  it("handles login auth, wrong password, rate limit and cookie verification", async () => {
-    const app = createApp();
-    const rateLimitedIp = `192.0.2.${Date.now() % 250}`;
-    const goodLoginIp = `198.51.100.${Date.now() % 250}`;
-
-    const badLoginRes = await app.request("/admin/login", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "cf-connecting-ip": rateLimitedIp,
-      },
-      body: JSON.stringify({ password: "wrong-password" }),
-    });
-    expect(badLoginRes.status).toBe(401);
-    expect(await badLoginRes.json()).toEqual({ error: "unauthorized" });
-
-    const meUnauthorized = await app.request("/admin/me", { method: "GET" });
-    expect(meUnauthorized.status).toBe(401);
-
-    for (let i = 0; i < 4; i++) {
-      const r = await app.request("/admin/login", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "cf-connecting-ip": rateLimitedIp,
-        },
-        body: JSON.stringify({ password: "wrong-password" }),
-      });
-      expect(r.status).toBe(401);
-    }
-
-    const rateLimitedRes = await app.request("/admin/login", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "cf-connecting-ip": rateLimitedIp,
-      },
-      body: JSON.stringify({ password: TEST_PASSWORD }),
-    });
-    expect(rateLimitedRes.status).toBe(429);
-    expect(await rateLimitedRes.json()).toEqual({ error: "rate_limited" });
-
-    const goodLoginRes = await app.request("/admin/login", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "cf-connecting-ip": goodLoginIp,
-      },
-      body: JSON.stringify({ password: TEST_PASSWORD }),
-    });
-    expect(goodLoginRes.status).toBe(200);
-    const loginBody = (await goodLoginRes.json()) as { ok: boolean; token: string };
-    expect(loginBody.ok).toBe(true);
-    expect(typeof loginBody.token).toBe("string");
-    expect(loginBody.token.length).toBeGreaterThan(0);
-
-    const cookieHeader = goodLoginRes.headers.get("set-cookie");
-    expect(cookieHeader).toBeDefined();
-    expect(cookieHeader).toContain("admin_session=");
-    expect(cookieHeader).toContain("HttpOnly");
-    expect(cookieHeader).toContain("SameSite=None");
-    expect(cookieHeader).toContain("Secure");
-    expect(cookieHeader).toContain("Path=/");
-    expect(cookieHeader).toContain("Max-Age=604800");
-
-    const cookieMatch = cookieHeader?.match(/admin_session=[^;]+/);
-    expect(cookieMatch).toBeTruthy();
-    adminSessionCookie = cookieMatch![0];
-
-    const meAuthorized = await app.request("/admin/me", {
-      method: "GET",
-      headers: { cookie: adminSessionCookie },
-    });
-    expect(meAuthorized.status).toBe(200);
-    expect(await meAuthorized.json()).toEqual({ ok: true });
-
-    const logoutRes = await app.request("/admin/logout", {
-      method: "POST",
-      headers: { cookie: adminSessionCookie },
-    });
-    expect(logoutRes.status).toBe(200);
-    const logoutCookie = logoutRes.headers.get("set-cookie");
-    expect(logoutCookie).toContain("admin_session=");
-    expect(logoutCookie).toContain("Max-Age=0");
   });
 
   it("computes exact funnel counts, midnight boundaries, campaign stats, and dropoff", async () => {

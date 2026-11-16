@@ -23,7 +23,7 @@ describe.skipIf(!isolatedDb.url)("Short course video on a second chance", () => 
 
   beforeAll(async () => {
     await isolatedDb.create();
-    setTestEnv({ DATABASE_URL: isolatedDb.url!, SESSION_SECRET: "offer-video-session-secret-0123456789" });
+    setTestEnv({ DATABASE_URL: isolatedDb.url! });
     await runMigrations(isolatedDb.url!);
     ({ recordOfferProgress, recordProgress } = await import("./service"));
     ({ syncSegment } = await import("@/funnel/segments"));

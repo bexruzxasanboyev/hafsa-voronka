@@ -11,7 +11,7 @@ import {
   paymentReceiptsResponseSchema,
   paymentUsersLookupResponseSchema,
 } from "@funnel/shared";
-import { hashPassword } from "@/admin/auth";
+import { hashPassword } from "@/admin/password";
 import { getTashkentToday } from "@/admin/dates";
 import { closeDb, db } from "@/db";
 import { runMigrations } from "@/db/migrate";
@@ -55,7 +55,6 @@ describe.skipIf(!isolatedDb.url)("Payments, debts, receipts, and courses API", (
     await isolatedDb.create();
     setTestEnv({
       DATABASE_URL: isolatedDb.url!,
-      SESSION_SECRET: "payments-session-secret-0123456789abcdef",
       ADMIN_PASSWORD_HASH: await hashPassword(TEST_PASSWORD),
       LEADS_CHAT_ID,
     });
@@ -104,7 +103,7 @@ describe.skipIf(!isolatedDb.url)("Payments, debts, receipts, and courses API", (
     const login = await app.request("/admin/login", {
       method: "POST",
       headers: { "content-type": "application/json", "cf-connecting-ip": "203.0.113.99" },
-      body: JSON.stringify({ password: TEST_PASSWORD }),
+      body: JSON.stringify({ username: "admin", password: TEST_PASSWORD }),
     });
     expect(login.status).toBe(200);
     cookie = login.headers.get("set-cookie")!.split(";")[0];

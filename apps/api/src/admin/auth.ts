@@ -1,150 +1,134 @@
-import { createHmac, randomBytes, scrypt, timingSafeEqual } from "node:crypto";
-import { promisify } from "node:util";
-import type { Context, MiddlewareHandler } from "hono";
-import { deleteCookie, getSignedCookie, setSignedCookie } from "hono/cookie";
+import { createHash, randomBytes } from "node:crypto";
+import { and, eq, gt, inArray, isNull, sql } from "drizzle-orm";
+import type { Context } from "hono";
+import { deleteCookie, getCookie, setCookie } from "hono/cookie";
+import { createMiddleware } from "hono/factory";
+import type { AdminIdentity } from "@funnel/shared";
+import { db } from "@/db";
+import { adminSessions, adminUsers } from "@/db/schema";
 import { env } from "@/env";
+import { ensureAdminAccounts } from "@/admin/accounts";
 
-const scryptAsync = promisify(scrypt);
 const SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
+const LAST_SEEN_WRITE_INTERVAL_MS = 5 * 60 * 1000;
 export const COOKIE_NAME = "admin_session";
 
-export function signToken(value: string, secret: string): string {
-  const sig = createHmac("sha256", secret).update(value).digest("base64url");
-  return `${value}.${sig}`;
-}
-
-export function verifyToken(token: string, secret: string): string | null {
-  const dotIndex = token.indexOf(".");
-  if (dotIndex === -1) return null;
-  const val = token.slice(0, dotIndex);
-  const sig = token.slice(dotIndex + 1);
-  if (!val || !sig) return null;
-  const expectedSig = createHmac("sha256", secret).update(val).digest("base64url");
-  if (sig.length !== expectedSig.length) return null;
-  if (!timingSafeEqual(Buffer.from(sig), Buffer.from(expectedSig))) return null;
-  return val;
-}
-
-export function getAdminPasswordHash(): string | undefined {
-  return process.env.ADMIN_PASSWORD_HASH || env.ADMIN_PASSWORD_HASH;
-}
-
-export function getSessionSecret(): string | undefined {
-  return process.env.SESSION_SECRET || env.SESSION_SECRET;
-}
-
-export async function hashPassword(password: string): Promise<string> {
-  const salt = randomBytes(16);
-  const key = (await scryptAsync(password, salt, 64)) as Buffer;
-  return `scrypt$${salt.toString("base64")}$${key.toString("base64")}`;
-}
-
-export async function verifyPassword(password: string, storedHash: string): Promise<boolean> {
-  const parts = storedHash.split("$");
-  if (parts.length !== 3 || parts[0] !== "scrypt") {
-    return false;
-  }
-  const salt = Buffer.from(parts[1], "base64");
-  const expectedKey = Buffer.from(parts[2], "base64");
-  if (salt.length !== 16 || expectedKey.length !== 64) {
-    return false;
-  }
-  const derivedKey = (await scryptAsync(password, salt, 64)) as Buffer;
-  return timingSafeEqual(derivedKey, expectedKey);
-}
-
-export const requireAdminConfig: MiddlewareHandler = async (c, next) => {
-  const hash = getAdminPasswordHash();
-  const secret = getSessionSecret();
-  if (!hash || !secret || !process.env.ADMIN_PASSWORD_HASH || !process.env.SESSION_SECRET) {
-    return c.json({ error: "admin_disabled" }, 503);
-  }
-  return next();
+export type AdminEnv = {
+  Variables: {
+    admin: AdminIdentity;
+    adminSessionId: number;
+  };
 };
 
-export async function verifyAdminSession(c: Context): Promise<boolean> {
-  const secret = getSessionSecret();
-  if (!secret) {
-    return false;
-  }
-
-  // 1. Authorization header: Bearer <token>
-  const authHeader = c.req.header("Authorization") || c.req.header("authorization");
-  if (authHeader?.startsWith("Bearer ")) {
-    const token = authHeader.slice(7).trim();
-    const expiryStr = verifyToken(token, secret);
-    if (expiryStr) {
-      const expiry = Number(expiryStr);
-      if (!Number.isNaN(expiry) && expiry > Date.now()) {
-        return true;
-      }
-    }
-  }
-
-  // 2. Custom header: X-Admin-Session
-  const customHeader = c.req.header("x-admin-session");
-  if (customHeader) {
-    const expiryStr = verifyToken(customHeader.trim(), secret);
-    if (expiryStr) {
-      const expiry = Number(expiryStr);
-      if (!Number.isNaN(expiry) && expiry > Date.now()) {
-        return true;
-      }
-    }
-  }
-
-  // 3. Query parameter ?token= (useful for direct downloads like CSV)
-  const queryToken = c.req.query("token");
-  if (queryToken) {
-    const expiryStr = verifyToken(queryToken.trim(), secret);
-    if (expiryStr) {
-      const expiry = Number(expiryStr);
-      if (!Number.isNaN(expiry) && expiry > Date.now()) {
-        return true;
-      }
-    }
-  }
-
-  // 4. Fallback to signed cookie
-  const sessionVal = await getSignedCookie(c, secret, COOKIE_NAME);
-  if (typeof sessionVal === "string" && sessionVal) {
-    const expiry = Number(sessionVal);
-    if (!Number.isNaN(expiry) && expiry > Date.now()) {
-      return true;
-    }
-  }
-  return false;
+export function hashSessionToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
 }
 
-export const requireAdminAuth: MiddlewareHandler = async (c, next) => {
-  const valid = await verifyAdminSession(c);
-  if (!valid) {
+export async function createAdminSession(adminUserId: number): Promise<string> {
+  const token = randomBytes(32).toString("base64url");
+  await db()
+    .insert(adminSessions)
+    .values({
+      adminUserId,
+      tokenHash: hashSessionToken(token),
+      expiresAt: new Date(Date.now() + SESSION_MAX_AGE_SECONDS * 1000),
+    });
+  return token;
+}
+
+/** Tokens the client presented, in priority order: Bearer header, `?token=` (file downloads), cookie. */
+function presentedTokens(c: Context): string[] {
+  const tokens: string[] = [];
+  const authHeader = c.req.header("authorization");
+  if (authHeader?.startsWith("Bearer ")) tokens.push(authHeader.slice(7).trim());
+  const queryToken = c.req.query("token");
+  if (queryToken) tokens.push(queryToken.trim());
+  const cookie = getCookie(c, COOKIE_NAME);
+  if (cookie) tokens.push(cookie);
+  return [...new Set(tokens.filter(Boolean))];
+}
+
+async function findSession(token: string) {
+  const [row] = await db()
+    .select({
+      sessionId: adminSessions.id,
+      lastSeenAt: adminSessions.lastSeenAt,
+      id: adminUsers.id,
+      username: adminUsers.username,
+    })
+    .from(adminSessions)
+    .innerJoin(adminUsers, eq(adminUsers.id, adminSessions.adminUserId))
+    .where(
+      and(
+        eq(adminSessions.tokenHash, hashSessionToken(token)),
+        isNull(adminSessions.revokedAt),
+        gt(adminSessions.expiresAt, sql`now()`),
+      ),
+    )
+    .limit(1);
+  return row;
+}
+
+export async function resolveAdminSession(
+  c: Context,
+): Promise<{ admin: AdminIdentity; sessionId: number } | null> {
+  for (const token of presentedTokens(c)) {
+    const row = await findSession(token);
+    if (!row) continue;
+    if (Date.now() - row.lastSeenAt.getTime() > LAST_SEEN_WRITE_INTERVAL_MS) {
+      await db()
+        .update(adminSessions)
+        .set({ lastSeenAt: sql`now()` })
+        .where(eq(adminSessions.id, row.sessionId));
+    }
+    return { admin: { id: row.id, username: row.username }, sessionId: row.sessionId };
+  }
+  return null;
+}
+
+/** Revokes every session whose token the request presented. */
+export async function revokePresentedSessions(c: Context): Promise<void> {
+  const hashes = presentedTokens(c).map(hashSessionToken);
+  if (hashes.length === 0) return;
+  await db()
+    .update(adminSessions)
+    .set({ revokedAt: sql`now()` })
+    .where(and(inArray(adminSessions.tokenHash, hashes), isNull(adminSessions.revokedAt)));
+}
+
+let adminsExist = false;
+
+/**
+ * 503 `admin_disabled` while no admin account exists (and none can be bootstrapped from env).
+ * Once an admin is seen the result is cached: the last admin can never be deleted through the API.
+ */
+export const requireAdminConfig = createMiddleware(async (c, next) => {
+  if (!adminsExist) {
+    adminsExist = await ensureAdminAccounts();
+    if (!adminsExist) return c.json({ error: "admin_disabled" }, 503);
+  }
+  return next();
+});
+
+export const requireAdminAuth = createMiddleware<AdminEnv>(async (c, next) => {
+  const session = await resolveAdminSession(c);
+  if (!session) {
     return c.json({ error: "unauthorized" }, 401);
   }
+  c.set("admin", session.admin);
+  c.set("adminSessionId", session.sessionId);
   return next();
-};
+});
 
-export async function setAdminSessionCookie(c: Context): Promise<string> {
-  const secret = getSessionSecret();
-  const expiryMs = Date.now() + SESSION_MAX_AGE_SECONDS * 1000;
+function cookieFlags() {
   const isHttps = env.API_URL.startsWith("https");
+  return { path: "/", secure: isHttps, sameSite: isHttps ? "None" : "Lax" } as const;
+}
 
-  await setSignedCookie(c, COOKIE_NAME, String(expiryMs), secret!, {
-    httpOnly: true,
-    sameSite: isHttps ? "None" : "Lax",
-    path: "/",
-    maxAge: SESSION_MAX_AGE_SECONDS,
-    secure: isHttps,
-  });
-
-  return signToken(String(expiryMs), secret!);
+export function setAdminSessionCookie(c: Context, token: string): void {
+  setCookie(c, COOKIE_NAME, token, { ...cookieFlags(), httpOnly: true, maxAge: SESSION_MAX_AGE_SECONDS });
 }
 
 export function clearAdminSessionCookie(c: Context): void {
-  const isHttps = env.API_URL.startsWith("https");
-  deleteCookie(c, COOKIE_NAME, {
-    path: "/",
-    secure: isHttps,
-    sameSite: isHttps ? "None" : "Lax",
-  });
+  deleteCookie(c, COOKIE_NAME, cookieFlags());
 }

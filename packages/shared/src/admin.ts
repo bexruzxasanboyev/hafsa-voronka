@@ -1,10 +1,101 @@
 import { z } from "zod";
 
+export const ADMIN_PASSWORD_MIN_LENGTH = 10;
+export const ADMIN_PASSWORD_MAX_LENGTH = 200;
+
+/** Lowercase letters, digits, dot, underscore, dash; 3-32 chars. Inputs are trimmed and lowercased. */
+export const adminUsernameSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .regex(/^[a-z0-9._-]{3,32}$/);
+
+export const adminNewPasswordSchema = z
+  .string()
+  .min(ADMIN_PASSWORD_MIN_LENGTH)
+  .max(ADMIN_PASSWORD_MAX_LENGTH);
+
 export const adminLoginRequestSchema = z.object({
-  password: z.string().min(1),
+  username: z.string().trim().toLowerCase().min(1).max(64),
+  password: z.string().min(1).max(ADMIN_PASSWORD_MAX_LENGTH),
 });
 
 export type AdminLoginRequest = z.infer<typeof adminLoginRequestSchema>;
+
+export const adminIdentitySchema = z.object({
+  id: z.number().int(),
+  username: z.string(),
+});
+
+export type AdminIdentity = z.infer<typeof adminIdentitySchema>;
+
+/** POST /admin/login 200 */
+export const adminLoginResponseSchema = z.object({
+  ok: z.literal(true),
+  token: z.string(),
+  admin: adminIdentitySchema,
+});
+
+/** GET /admin/me 200 */
+export const adminMeResponseSchema = z.object({
+  ok: z.literal(true),
+  admin: adminIdentitySchema,
+});
+
+/** POST /admin/account/password */
+export const adminChangePasswordRequestSchema = z.object({
+  currentPassword: z.string().min(1).max(ADMIN_PASSWORD_MAX_LENGTH),
+  newPassword: adminNewPasswordSchema,
+});
+
+export type AdminChangePasswordRequest = z.infer<typeof adminChangePasswordRequestSchema>;
+
+export const adminUserSchema = adminIdentitySchema.extend({
+  createdAt: z.string(),
+  lastLoginAt: z.string().nullable(),
+  isSelf: z.boolean(),
+});
+
+export type AdminUser = z.infer<typeof adminUserSchema>;
+
+/** GET /admin/admins 200 */
+export const adminUsersResponseSchema = z.object({
+  admins: z.array(adminUserSchema),
+});
+
+/** POST /admin/admins */
+export const adminCreateUserRequestSchema = z.object({
+  username: adminUsernameSchema,
+  password: adminNewPasswordSchema,
+});
+
+export type AdminCreateUserRequest = z.infer<typeof adminCreateUserRequestSchema>;
+
+/** POST /admin/admins 201 */
+export const adminCreateUserResponseSchema = z.object({
+  admin: adminUserSchema,
+});
+
+/**
+ * Error codes (JSON `{ error }`) of the admin account endpoints:
+ * - POST /admin/login: 400 invalid_request, 401 invalid_credentials, 429 rate_limited
+ * - POST /admin/account/password: 400 invalid_request | weak_password, 401 wrong_password, 429 rate_limited
+ * - POST /admin/admins: 400 invalid_request | invalid_username | weak_password, 409 username_taken
+ * - DELETE /admin/admins/:id: 400 cannot_delete_self, 404 not_found, 409 last_admin
+ * - any authenticated route: 401 unauthorized
+ */
+export type AdminAccountErrorCode =
+  | "invalid_request"
+  | "invalid_credentials"
+  | "rate_limited"
+  | "weak_password"
+  | "wrong_password"
+  | "invalid_username"
+  | "username_taken"
+  | "cannot_delete_self"
+  | "not_found"
+  | "last_admin"
+  | "unauthorized";
 
 export const adminStatsQuerySchema = z.object({
   from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),

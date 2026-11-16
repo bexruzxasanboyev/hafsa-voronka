@@ -90,7 +90,7 @@ export function createApp() {
     "/admin/*",
     cors({
       origin: originFor,
-      allowHeaders: ["Content-Type", "Authorization", "x-admin-session"],
+      allowHeaders: ["Content-Type", "Authorization"],
       allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
       credentials: true,
       maxAge: 86400,

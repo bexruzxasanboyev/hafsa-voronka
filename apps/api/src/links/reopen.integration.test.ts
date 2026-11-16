@@ -45,7 +45,7 @@ describe.skipIf(!isolatedDb.url)("Reopening a closed lesson", () => {
 
   beforeAll(async () => {
     await isolatedDb.create();
-    setTestEnv({ DATABASE_URL: isolatedDb.url!, SESSION_SECRET: "reopen-session-secret-0123456789" });
+    setTestEnv({ DATABASE_URL: isolatedDb.url! });
     await runMigrations(isolatedDb.url!);
     testBot = (await import("@/telegram/bot")).bot();
     testBot.botInfo = {

@@ -2,10 +2,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import type { Bot } from "grammy";
 import postgres from "postgres";
-import { hashPassword } from "@/admin/auth";
 import { closeDb, db } from "@/db";
 import { runMigrations } from "@/db/migrate";
 import { events, messageTemplates, users, videos } from "@/db/schema";
+import { seedTestAdmin } from "@/test/admin";
 import { setTestEnv } from "@/test/env";
 import { ensureActiveTestVideo } from "@/test/videos";
 
@@ -45,8 +45,6 @@ describe.skipIf(!testDbUrl)("Message constructor", () => {
     await admin.end();
     setTestEnv({
       DATABASE_URL: testDbUrl!,
-      ADMIN_PASSWORD_HASH: await hashPassword(PASSWORD),
-      SESSION_SECRET: "messages-session-secret-0123456789abcdef",
       LEADS_CHAT_ID,
       ADMIN_TELEGRAM_IDS: String(ADMIN_ID),
     });
@@ -78,10 +76,12 @@ describe.skipIf(!testDbUrl)("Message constructor", () => {
     });
     app = (await import("@/app")).createApp();
 
+    const username = await seedTestAdmin(PASSWORD);
+
     const login = await app.request("/admin/login", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ password: PASSWORD }),
+      body: JSON.stringify({ username, password: PASSWORD }),
     });
     cookie = login.headers.get("set-cookie")!.split(";")[0];
   });

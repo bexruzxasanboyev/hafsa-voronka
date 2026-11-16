@@ -1,8 +1,9 @@
 import { build } from "esbuild";
 
 await build({
-  entryPoints: ["src/index.ts"],
-  outfile: "dist/index.js",
+  // The recovery CLI ships in dist/ because the runtime image has no tsx or sources.
+  entryPoints: { index: "src/index.ts", "admin-reset-password": "scripts/admin-reset-password.ts" },
+  outdir: "dist",
   bundle: true,
   platform: "node",
   format: "esm",

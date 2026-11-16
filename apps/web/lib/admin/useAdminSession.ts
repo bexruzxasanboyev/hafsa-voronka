@@ -11,9 +11,9 @@ export function useAdminSession() {
 
   useEffect(() => {
     let active = true;
-    void adminMe().then((isLoggedIn) => {
+    void adminMe().then((session) => {
       if (!active) return;
-      if (isLoggedIn) setAuthorized(true);
+      if (session.ok) setAuthorized(true);
       else router.replace("/admin/login");
     });
     return () => {

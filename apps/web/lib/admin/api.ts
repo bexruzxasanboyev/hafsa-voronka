@@ -1,8 +1,13 @@
 import {
+  adminCreateUserResponseSchema,
+  adminMeResponseSchema,
   adminStatsResponseSchema,
+  adminUsersResponseSchema,
+  type AdminIdentity,
   type AdminStatsResponse,
+  type AdminUser,
 } from "@funnel/shared";
-import { API_URL } from "@/lib/api";
+import { API_URL } from "../api";
 
 const TOKEN_KEY = "funnel_admin_token";
 
@@ -27,12 +32,15 @@ export function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-export async function adminLogin(password: string): Promise<{ ok: boolean; status: number; error?: string }> {
+export async function adminLogin(
+  username: string,
+  password: string,
+): Promise<{ ok: boolean; status: number; error?: string }> {
   try {
     const res = await fetch(`${API_URL}/admin/login`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ password }),
+      body: JSON.stringify({ username: username.trim().toLowerCase(), password }),
       credentials: "include",
     });
 
@@ -64,21 +72,59 @@ export async function adminLogout(): Promise<{ ok: boolean }> {
   }
 }
 
-export async function adminMe(): Promise<boolean> {
+export type AdminResult<T = undefined> =
+  | { ok: true; data: T }
+  | { ok: false; status: number; error?: string };
+
+async function adminRequest<T>(
+  path: string,
+  parse: (json: unknown) => T,
+  init: { method?: string; body?: unknown } = {},
+): Promise<AdminResult<T>> {
   try {
-    const res = await fetch(`${API_URL}/admin/me`, {
-      method: "GET",
-      headers: authHeaders(),
+    const res = await fetch(`${API_URL}${path}`, {
+      method: init.method ?? "GET",
+      headers: {
+        ...authHeaders(),
+        ...(init.body !== undefined ? { "content-type": "application/json" } : {}),
+      },
+      body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
       credentials: "include",
     });
-    if (res.status === 401) {
-      setAdminToken(null);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      return { ok: false, status: res.status, error: typeof data?.error === "string" ? data.error : undefined };
     }
-    return res.status === 200;
+    return { ok: true, data: parse(await res.json().catch(() => ({}))) };
   } catch {
-    return false;
+    return { ok: false, status: 0, error: "network_error" };
   }
 }
+
+export async function adminMe(): Promise<AdminResult<AdminIdentity>> {
+  const result = await adminRequest("/admin/me", (json) => adminMeResponseSchema.parse(json).admin);
+  if (!result.ok && result.status === 401) setAdminToken(null);
+  return result;
+}
+
+export const changeAdminPassword = (currentPassword: string, newPassword: string): Promise<AdminResult> =>
+  adminRequest("/admin/account/password", () => undefined, {
+    method: "POST",
+    body: { currentPassword, newPassword },
+  });
+
+export async function listAdmins(): Promise<AdminResult<AdminUser[]>> {
+  return adminRequest("/admin/admins", (json) => adminUsersResponseSchema.parse(json).admins);
+}
+
+export const createAdmin = (username: string, password: string): Promise<AdminResult<AdminUser>> =>
+  adminRequest("/admin/admins", (json) => adminCreateUserResponseSchema.parse(json).admin, {
+    method: "POST",
+    body: { username: username.trim().toLowerCase(), password },
+  });
+
+export const deleteAdmin = (id: number): Promise<AdminResult> =>
+  adminRequest(`/admin/admins/${encodeURIComponent(String(id))}`, () => undefined, { method: "DELETE" });
 
 export async function fetchAdminStats(params: {
   from: string;

@@ -57,7 +57,6 @@ describe.skipIf(!testDbUrl)("Message dispatcher", () => {
     await admin.end();
     setTestEnv({
       DATABASE_URL: testDbUrl!,
-      SESSION_SECRET: "dispatch-session-secret-0123456789abcdef",
     });
     await runMigrations(testDbUrl!);
     testBot = (await import("@/telegram/bot")).bot();

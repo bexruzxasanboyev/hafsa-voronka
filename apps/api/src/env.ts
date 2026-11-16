@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { adminUsernameSchema } from "@funnel/shared";
 
 const booleanEnv = (defaultValue: boolean) =>
   z.union([z.boolean(), z.stringbool()]).default(defaultValue);
@@ -66,7 +67,10 @@ const schema = z
       .transform((value) => value.replace(/\/+$/, ""))
       .optional(),
     BOT_WEBHOOK_URL: z.url().optional(),
+    /** One-time bootstrap only: seeds the first admin while `admin_users` is empty, ignored afterwards. */
     ADMIN_PASSWORD_HASH: z.string().optional(),
+    ADMIN_USERNAME: adminUsernameSchema.default("admin"),
+    /** Legacy, unused since admin sessions moved to the database; still accepted so old env files parse. */
     SESSION_SECRET: z.string().min(32).optional(),
     GEMINI_API_KEY: z.string().min(1).optional(),
     GEMINI_OCR_MODEL: z.string().min(1).default("gemini-2.5-flash"),

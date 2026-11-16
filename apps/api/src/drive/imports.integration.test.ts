@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
-import { hashPassword } from "@/admin/auth";
+import { hashPassword } from "@/admin/password";
 import { closeDb, db } from "@/db";
 import { runMigrations } from "@/db/migrate";
 import { videoImports, videos } from "@/db/schema";
@@ -84,7 +84,6 @@ describe.skipIf(!database.url)("Drive import", () => {
     setTestEnv({
       DATABASE_URL: database.url!,
       ADMIN_PASSWORD_HASH: await hashPassword(PASSWORD),
-      SESSION_SECRET: "drive-session-secret-0123456789abcdef",
       GOOGLE_SA_EMAIL: "importer@funnel.iam.gserviceaccount.com",
       GOOGLE_SA_KEY: "-----BEGIN PRIVATE KEY-----\\nabc\\n-----END PRIVATE KEY-----\\n",
       R2_ACCOUNT_ID: "acc",
@@ -101,7 +100,7 @@ describe.skipIf(!database.url)("Drive import", () => {
     const login = await app.request("/admin/login", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ password: PASSWORD }),
+      body: JSON.stringify({ username: "admin", password: PASSWORD }),
     });
     token = ((await login.json()) as { token: string }).token;
   });

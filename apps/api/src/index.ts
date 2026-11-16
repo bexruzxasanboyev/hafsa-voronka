@@ -1,4 +1,5 @@
 import { serve } from "@hono/node-server";
+import { ensureAdminAccounts } from "@/admin/accounts";
 import { createApp } from "@/app";
 import { closeDb } from "@/db";
 import { runMigrations } from "@/db/migrate";
@@ -14,6 +15,9 @@ import { seedVideoFromEnv } from "@/videos/service";
 const env = loadEnv();
 
 await runMigrations(env.DATABASE_URL);
+if (!(await ensureAdminAccounts())) {
+  console.warn("Admin panel disabled: no admin accounts and no ADMIN_PASSWORD_HASH to bootstrap one");
+}
 await seedVideoFromEnv({ url: env.VIDEO_URL, duration: env.VIDEO_DURATION_SEC });
 await bot().init();
 await resumeBotUploads(bot().api);
