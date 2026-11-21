@@ -7,6 +7,7 @@ import { initDataAuth } from "@/auth";
 import { db } from "@/db";
 import { env } from "@/env";
 import { adminRoutes } from "@/routes/admin";
+import { integrationRoutes } from "@/routes/integrations";
 import { landingRoutes } from "@/routes/landing";
 import { leadRoutes } from "@/routes/leads";
 import { miniappRoutes } from "@/routes/miniapp";
@@ -85,6 +86,7 @@ export function createApp() {
   app.route("/leads", leadRoutes);
 
   app.route("/r", redirectRoutes);
+  app.route("/integrations", integrationRoutes);
 
   app.use(
     "/admin/*",

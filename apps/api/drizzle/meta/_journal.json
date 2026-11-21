@@ -225,6 +225,13 @@
       "when": 1794819035635,
       "tag": "0031_admin_users_and_sessions",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1795249216798,
+      "tag": "0032_hermes_mirror",
+      "breakpoints": true
     }
   ]
 }
