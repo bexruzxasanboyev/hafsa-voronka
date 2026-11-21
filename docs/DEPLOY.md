@@ -587,7 +587,7 @@ Comprehensive reference for all environment variables used by the API and Web ap
 | `R2_PUBLIC_BASE_URL` | API (`apps/api`) | Optional, all five `R2_*` variables together | `https://video.yourdomain.uz` | Public base URL of the bucket custom domain; uploaded video URLs are built from it |
 | `NEXT_PUBLIC_API_URL` | Web (`apps/web`) | Required | `https://api.yourdomain.uz` | Public API URL accessible from browser/Mini App |
 | `NEXT_PUBLIC_BOT_USERNAME` | Web (`apps/web`) | Required | `your_bot` | Telegram bot username (without @) for deep linking |
-| `NEXT_PUBLIC_APP_URL` | Web (`apps/web`) | Required | `https://hafsa.azeemov.uz` | Public site URL; makes the link-preview (OG) image URL absolute |
+| `NEXT_PUBLIC_APP_URL` | Web (`apps/web`) | Required | `https://hafsauztoza.vercel.app` | Public site URL; makes the link-preview (OG) image URL absolute |
 | `GEMINI_API_KEY` | API (`apps/api`) | Optional | `AIza...` | Google Gemini key for reading payment receipts (OCR). Without it, receipts are confirmed by hand |
 | `GEMINI_OCR_MODEL` | API (`apps/api`) | Optional | `gemini-2.5-flash` (default) | Gemini model used for receipt OCR |
 | `DROP_PENDING_UPDATES` | set-webhook script | Optional | `false` (default) | `true` discards queued Telegram updates when registering the webhook |
