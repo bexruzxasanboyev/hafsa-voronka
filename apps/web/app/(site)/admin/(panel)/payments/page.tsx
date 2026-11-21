@@ -14,6 +14,7 @@ import type {
 import { CatalogSheet } from "@/components/admin/payments/CatalogSheet";
 import { EnrollmentPaymentSheet } from "@/components/admin/payments/EnrollmentPaymentSheet";
 import { GroupBreakdownTable } from "@/components/admin/payments/GroupBreakdownTable";
+import { HermesPaymentsSection } from "@/components/admin/payments/HermesPaymentsSection";
 import { MasterPaymentsTable } from "@/components/admin/payments/MasterPaymentsTable";
 import { PaymentsKpiCards } from "@/components/admin/payments/PaymentsKpiCards";
 import { PendingReceiptsSection } from "@/components/admin/payments/PendingReceiptsSection";
@@ -364,6 +365,8 @@ function AdminPaymentsContent() {
           {actionError}
         </Notice>
       )}
+
+      <HermesPaymentsSection />
 
       <PendingReceiptsSection
         receipts={receiptsData?.items ?? []}
