@@ -271,6 +271,15 @@ Verify webhook status:
 curl https://api.telegram.org/bot<PRODUCTION_BOT_TOKEN>/getWebhookInfo
 ```
 
+### Hermes Mirror Sync
+
+Hermes (an external Telethon sales worker logged into the admin account) can push signed chat, payment, and heartbeat events to `POST /integrations/hermes/events`.
+
+1. Generate a shared secret (32–256 chars, e.g. `openssl rand -hex 32`) and set `HERMES_SYNC_SECRET` in `deploy/.env.prod` and in Hermes.
+2. When `HERMES_SYNC_SECRET` is unset, `POST /integrations/hermes/events` returns `404`.
+3. While Hermes has sent a heartbeat within the last 10 minutes, admin-button clicks no longer count as admin contact (same rule as an approved Telegram Business connection).
+4. Inspect status and mirrored payments via `GET /admin/hermes/status` and `GET /admin/hermes/payments`.
+
 ### Local Bot API Server (Admin Video Uploads from Telegram)
 
 Admins in `ADMIN_TELEGRAM_IDS` can send a video to the bot and replace the lesson video. Files larger than 20 MB need the self-hosted `aiogram/telegram-bot-api` container (`telegram-bot-api` service in `deploy/docker-compose.prod.yml`, pinned to `10.3`, run with `--local`). The `api` and `telegram-bot-api` services share the `tgbotapi` volume at `/var/lib/telegram-bot-api`; the API reads downloaded files straight from disk and deletes them after the R2 upload. The server writes files readable only by its own user, so it runs as uid 1000 (the API image's `node` user) instead of the image's default user, and the one-off `telegram-bot-api-volume` service hands the volume to that uid before it starts. Keep both uids in sync if the API image's user changes.
@@ -590,5 +599,6 @@ Comprehensive reference for all environment variables used by the API and Web ap
 | `NEXT_PUBLIC_APP_URL` | Web (`apps/web`) | Required | `https://hafsauztoza.vercel.app` | Public site URL; makes the link-preview (OG) image URL absolute |
 | `GEMINI_API_KEY` | API (`apps/api`) | Optional | `AIza...` | Google Gemini key for reading payment receipts (OCR). Without it, receipts are confirmed by hand |
 | `GEMINI_OCR_MODEL` | API (`apps/api`) | Optional | `gemini-2.5-flash` (default) | Gemini model used for receipt OCR |
+| `HERMES_SYNC_SECRET` | API (`apps/api`) | Optional | `64-char hex secret` | HMAC-SHA256 shared secret (32–256 chars) for `POST /integrations/hermes/events`. When unset, the endpoint returns 404 |
 | `DROP_PENDING_UPDATES` | set-webhook script | Optional | `false` (default) | `true` discards queued Telegram updates when registering the webhook |
 | `TEST_DATABASE_URL` | Test Runner | Optional (CI / Tests) | `postgres://funnel:funnel@localhost:5432/funnel_test` | Isolated database URL for running integration tests |

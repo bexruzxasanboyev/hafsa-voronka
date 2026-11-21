@@ -74,6 +74,7 @@ const schema = z
     SESSION_SECRET: z.string().min(32).optional(),
     GEMINI_API_KEY: z.string().min(1).optional(),
     GEMINI_OCR_MODEL: z.string().min(1).default("gemini-2.5-flash"),
+    HERMES_SYNC_SECRET: z.string().min(32).max(256).optional(),
   })
   .superRefine((data, ctx) => {
     const r2Keys = [
@@ -128,6 +129,10 @@ export function loadEnv() {
     Object.fromEntries(Object.entries(process.env).filter(([, value]) => value !== "")),
   );
   return parsed;
+}
+
+export function resetEnv() {
+  parsed = undefined;
 }
 
 export const env = new Proxy({} as Env, {

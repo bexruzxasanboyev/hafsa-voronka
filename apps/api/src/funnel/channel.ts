@@ -6,7 +6,7 @@ import { logEvent } from "@/funnel/users";
 import { refreshUserLeadCards } from "@/leads/service";
 
 export type WroteAdminMeta = {
-  via?: "manual" | "business" | "won";
+  via?: "manual" | "business" | "won" | "hermes";
   businessConnectionId?: string;
 };
 

@@ -54,3 +54,4 @@ export * from "./adminSettings";
 export * from "./videoRollouts";
 export * from "./broadcasts";
 export * from "./payments";
+export * from "./hermes";

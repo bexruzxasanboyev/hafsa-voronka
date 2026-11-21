@@ -27,6 +27,7 @@ import {
   eventTypes,
   funnelSegments,
   type FunnelStatus,
+  hermesPaymentKinds,
   linkGrantKinds,
   offerAnswers,
   offerVariants,
@@ -972,3 +973,37 @@ export const adminSessions = pgTable(
   },
   (t) => [index("admin_sessions_admin_user_idx").on(t.adminUserId)],
 );
+
+export const integrationHeartbeats = pgTable("integration_heartbeats", {
+  name: text("name").primaryKey(),
+  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull(),
+});
+
+export type IntegrationHeartbeatRow = typeof integrationHeartbeats.$inferSelect;
+
+export const hermesPayments = pgTable(
+  "hermes_payments",
+  {
+    hermesId: bigint("hermes_id", { mode: "number" }).primaryKey(),
+    telegramId: bigint("telegram_id", { mode: "number" }).notNull(),
+    userId: bigint("user_id", { mode: "number" }).references(() => users.id, { onDelete: "set null" }),
+    payDate: text("pay_date"),
+    amountUzs: bigint("amount_uzs", { mode: "number" }),
+    monthNo: integer("month_no"),
+    tariff: text("tariff"),
+    confidence: text("confidence").notNull(),
+    kind: text("kind", { enum: hermesPaymentKinds }).notNull(),
+    source: text("source"),
+    hermesCreatedAt: timestamp("hermes_created_at", { withTimezone: true }).notNull(),
+    receivedAt: timestamp("received_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("hermes_payments_kind_pay_date_idx").on(t.kind, t.payDate),
+    index("hermes_payments_user_id_idx").on(t.userId),
+    check("hermes_payments_pay_date_format", sql`${t.payDate} is null or ${t.payDate} ~ '^\\d{4}-\\d{2}-\\d{2}$'`),
+    check("hermes_payments_kind_values", sql`${t.kind} in ('paid','deposit','ignored')`),
+  ],
+);
+
+export type HermesPaymentRow = typeof hermesPayments.$inferSelect;
