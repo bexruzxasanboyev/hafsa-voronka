@@ -64,9 +64,7 @@ docker compose up -d
 ```
 
 ### 2. Configure Environment Files
-
 Create `apps/api/.env`:
-
 ```env
 PORT=3001
 BOT_TOKEN=123456789:TEST-token
