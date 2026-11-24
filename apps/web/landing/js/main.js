@@ -151,13 +151,19 @@ for (const cta of document.querySelectorAll("[data-cta]")) cta.href = botUrl;
 const platform = detectPlatform();
 
 document.addEventListener("click", (event) => {
-  if (!event.target.closest('[data-cta], a[href*="t.me"]')) return;
   track({ visitor_id: vid, type: "cta_click" });
   pixel("trackCustom", "CTAClick");
   pixel("track", "Lead");
   clarity("event", "cta_click");
-  if (platform === "other" || event.metaKey || event.ctrlKey || event.shiftKey) return;
+  if (event.metaKey || event.ctrlKey || event.shiftKey) {
+    if (!event.target.closest("a[href]")) window.open(botUrl, "_blank", "noopener");
+    return;
+  }
   event.preventDefault();
+  if (platform === "other") {
+    location.href = botUrl;
+    return;
+  }
   openApp(appLink(vid, platform, botUrl), botUrl);
 });
 
