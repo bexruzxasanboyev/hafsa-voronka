@@ -25,7 +25,7 @@ const appHost = (() => {
 })();
 const isLocalTarget =
   appHost === "localhost" || appHost === "127.0.0.1" || appHost.endsWith(".trycloudflare.com");
-const pixelId = process.env.NEXT_PUBLIC_FB_PIXEL_ID ?? (isLocalTarget ? "" : "2585302615300650");
+const pixelId = process.env.NEXT_PUBLIC_FB_PIXEL_ID ?? (isLocalTarget ? "" : "2638835023297944");
 const clarityId = process.env.NEXT_PUBLIC_CLARITY_ID ?? (isLocalTarget ? "" : "z3mqc8x0cm");
 
 async function minifyCss(file) {
