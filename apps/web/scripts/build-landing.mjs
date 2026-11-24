@@ -20,7 +20,13 @@ const isLocalHost = (url) => {
   }
 };
 const isLocalTarget = isLocalHost(appUrl) || isLocalHost(apiUrl);
-const pixelId = process.env.NEXT_PUBLIC_FB_PIXEL_ID ?? (isLocalTarget ? "" : "2638835023297944");
+const envPixelId = process.env.NEXT_PUBLIC_FB_PIXEL_ID;
+const pixelId =
+  envPixelId && envPixelId !== "2585302615300650"
+    ? envPixelId
+    : isLocalTarget
+      ? ""
+      : "2638835023297944";
 const clarityId = process.env.NEXT_PUBLIC_CLARITY_ID ?? (isLocalTarget ? "" : "z3mqc8x0cm");
 
 async function minifyCss(file) {
