@@ -36,7 +36,7 @@ export function BotRegisterScreen() {
 
   const backToBot = () => {
     const tg = getTelegramWebApp();
-    const botUsername = process.env.NEXT_PUBLIC_BOT_USERNAME || "";
+    const botUsername = process.env.NEXT_PUBLIC_BOT_USERNAME || "hafsaustozabot";
     if (botUsername) tg?.openTelegramLink(`https://t.me/${botUsername}`);
     tg?.close();
   };

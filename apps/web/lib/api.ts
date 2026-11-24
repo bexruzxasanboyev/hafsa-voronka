@@ -1,7 +1,7 @@
 import { sessionResponseSchema, type SessionRequest, type SessionResponse } from "@funnel/shared";
 import { readMessageRef, readStartMode } from "@/lib/telegram";
 
-export const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
+export const API_URL = (process.env.NEXT_PUBLIC_API_URL || "https://hafsa.asos-it.uz").replace(/\/$/, "");
 
 export function miniAppPost(path: string, initData: string, body?: unknown) {
   return fetch(`${API_URL}${path}`, {

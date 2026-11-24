@@ -17,7 +17,7 @@ const scheherazade = Scheherazade_New({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"),
+  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || "https://hafsauztoza.vercel.app"),
   title: "Arab tilini nimadan boshlash kerak? Bepul video dars | Hafsa ustoza",
   description:
     "Hafsa ustozaning 12 yillik tajribasi asosida: arab tilini o‘rganishdagi 5 ta muhim qadam. Bepul video dars, Telegramda.",

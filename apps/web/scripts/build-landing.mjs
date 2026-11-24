@@ -1,30 +1,25 @@
 import { copyFile, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { transform } from "esbuild";
 
-const root = new URL("..", import.meta.url).pathname;
+const root = fileURLToPath(new URL("..", import.meta.url));
 const src = join(root, "landing");
 const out = join(root, "public");
 const outputs = ["index.html", "css", "js", "img", "svg"];
 
-function required(name) {
-  const value = process.env[name];
-  if (!value) throw new Error(`${name} is not set`);
-  return value.replace(/\/$/, "");
-}
-
-const apiUrl = required("NEXT_PUBLIC_API_URL");
-const botUsername = required("NEXT_PUBLIC_BOT_USERNAME");
-const appUrl = process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "") || "http://localhost:3000";
-const appHost = (() => {
+const apiUrl = (process.env.NEXT_PUBLIC_API_URL || "https://hafsa.asos-it.uz").replace(/\/$/, "");
+const botUsername = (process.env.NEXT_PUBLIC_BOT_USERNAME || "hafsaustozabot").replace(/^@/, "");
+const appUrl = (process.env.NEXT_PUBLIC_APP_URL || "https://hafsauztoza.vercel.app").replace(/\/$/, "");
+const isLocalHost = (url) => {
   try {
-    return new URL(appUrl).hostname;
+    const { hostname } = new URL(url);
+    return hostname === "localhost" || hostname === "127.0.0.1" || hostname.endsWith(".trycloudflare.com");
   } catch {
-    return "";
+    return false;
   }
-})();
-const isLocalTarget =
-  appHost === "localhost" || appHost === "127.0.0.1" || appHost.endsWith(".trycloudflare.com");
+};
+const isLocalTarget = isLocalHost(appUrl) || isLocalHost(apiUrl);
 const pixelId = process.env.NEXT_PUBLIC_FB_PIXEL_ID ?? (isLocalTarget ? "" : "2638835023297944");
 const clarityId = process.env.NEXT_PUBLIC_CLARITY_ID ?? (isLocalTarget ? "" : "z3mqc8x0cm");
 

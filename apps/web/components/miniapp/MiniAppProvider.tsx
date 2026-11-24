@@ -106,7 +106,7 @@ export function LoadingScreen() {
 }
 
 export function OpenInTelegramScreen() {
-  const botUsername = process.env.NEXT_PUBLIC_BOT_USERNAME || "";
+  const botUsername = process.env.NEXT_PUBLIC_BOT_USERNAME || "hafsaustozabot";
   const botUrl = botUsername ? `https://t.me/${botUsername}` : "https://t.me";
   return (
     <div className="flex min-h-dvh flex-col items-center justify-center p-6 text-center bg-siyoh text-varaq">
