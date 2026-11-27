@@ -218,6 +218,32 @@ describe.skipIf(!testDbUrl)("Bot registration flow", () => {
     expect(deletes).toEqual([{ chat_id: chatId, message_id: 1 }]);
   });
 
+  it("keeps the newest visible bot message so cleanup never empties a chat", async () => {
+    const { cleanupChatMessages } = await import("@/telegram/chatLog");
+    const chatId = 7_920_000 + Math.floor(Math.random() * 10_000);
+    const emptiedChatId = chatId + 10_000;
+    const now = new Date();
+    const hoursAgo = (hours: number) => new Date(now.getTime() - hours * 3_600_000);
+    await db()
+      .insert(chatMessages)
+      .values([
+        { chatId, messageId: 1, fromBot: false, sentAt: hoursAgo(30) },
+        { chatId, messageId: 2, fromBot: true, sentAt: hoursAgo(30) },
+        { chatId, messageId: 3, fromBot: true, sentAt: hoursAgo(26), deleteAt: hoursAgo(25) },
+        { chatId: emptiedChatId, messageId: 1, fromBot: true, sentAt: hoursAgo(30) },
+        { chatId: emptiedChatId, messageId: 2, fromBot: true, sentAt: hoursAgo(26), deletedAt: hoursAgo(1) },
+      ]);
+
+    await cleanupChatMessages(testBot.api, now, async () => {});
+
+    const deleted = (id: number) =>
+      calls
+        .filter((c) => c.method === "deleteMessage" && c.payload.chat_id === id)
+        .map((c) => c.payload.message_id);
+    expect(deleted(chatId).toSorted()).toEqual([1, 2]);
+    expect(deleted(emptiedChatId)).toEqual([]);
+  });
+
   it("respects deleteAt and keepForever in replaceBotReply and cleanupChatMessages", async () => {
     const { cleanupChatMessages, replaceBotReply } = await import("@/telegram/chatLog");
     const chatId = 7_950_000 + Math.floor(Math.random() * 100_000);

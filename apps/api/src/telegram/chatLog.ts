@@ -1,4 +1,5 @@
-import { and, asc, eq, gt, isNotNull, isNull, lte, or } from "drizzle-orm";
+import { and, asc, eq, exists, gt, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { type Api, GrammyError } from "grammy";
 import { db } from "@/db";
 import { type ChatMessage, chatMessages } from "@/db/schema";
@@ -21,6 +22,27 @@ export async function logChatMessage(chatId: number, messageId: number, fromBot:
 }
 
 const undeleted = and(isNull(chatMessages.deletedAt), isNull(chatMessages.deleteError));
+
+// Cleanup must never empty a chat: the newest bot message that is still visible stays until a newer
+// one replaces it, so the user always has a working lesson button.
+const newerBot = alias(chatMessages, "newer_bot");
+const notNewestBotMessage = () =>
+  or(
+    eq(chatMessages.fromBot, false),
+    exists(
+      db()
+        .select({ one: sql`1` })
+        .from(newerBot)
+        .where(
+          and(
+            eq(newerBot.chatId, chatMessages.chatId),
+            eq(newerBot.fromBot, true),
+            gt(newerBot.id, chatMessages.id),
+            isNull(newerBot.deletedAt),
+          ),
+        ),
+    ),
+  );
 
 async function deleteLogged(api: Api, row: ChatMessage, now: Date) {
   const mark = (values: { deletedAt: Date } | { deleteError: string }) =>
@@ -89,6 +111,7 @@ export async function cleanupChatMessages(api: Api, now: Date, pace: Pace) {
         gt(chatMessages.sentAt, new Date(now.getTime() - DELETE_LIMIT_MS)),
         eq(chatMessages.keepForever, false),
         undeleted,
+        notNewestBotMessage(),
         or(
           and(isNotNull(chatMessages.deleteAt), lte(chatMessages.deleteAt, now)),
           and(isNull(chatMessages.deleteAt), lte(chatMessages.sentAt, new Date(now.getTime() - cleanupAgeMs))),
