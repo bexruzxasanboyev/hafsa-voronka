@@ -47,6 +47,9 @@ next-env.d.ts
 /apps/web/public/js/
 /apps/web/public/img/
 /apps/web/public/svg/
+/apps/web/public/a/
+/apps/web/public/b/
+/apps/web/public/c/
 !deploy/.env.prod.example
 .superpowers/
 .claude/*

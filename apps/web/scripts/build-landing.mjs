@@ -6,7 +6,8 @@ import { transform } from "esbuild";
 const root = fileURLToPath(new URL("..", import.meta.url));
 const src = join(root, "landing");
 const out = join(root, "public");
-const outputs = ["index.html", "css", "js", "img", "svg"];
+const variants = ["a", "b", "c"];
+const outputs = ["index.html", ...variants, "css", "js", "img", "svg"];
 
 const apiUrl = (process.env.NEXT_PUBLIC_API_URL || "https://hafsa.asos-it.uz").replace(/\/$/, "");
 const botUsername = (process.env.NEXT_PUBLIC_BOT_USERNAME || "hafsaustozabot").replace(/^@/, "");
@@ -49,17 +50,29 @@ async function minifyJs(file, define) {
 }
 
 await Promise.all(outputs.map((name) => rm(join(out, name), { recursive: true, force: true })));
-await Promise.all(["css", "js", "img", "svg"].map((dir) => mkdir(join(out, dir), { recursive: true })));
+await Promise.all(["css", "js", "img", "svg", ...variants].map((dir) => mkdir(join(out, dir), { recursive: true })));
 
 const criticalCss = await minifyCss("critical.css");
-let html = (await readFile(join(src, "index.html"), "utf8"))
-  .replace("%%CRITICAL_CSS%%", () => criticalCss)
-  .replaceAll("%%APP_URL%%", appUrl)
-  .replaceAll("%%BOT_USERNAME%%", botUsername);
-if (!pixelId) html = html.replace(/<script src="\.\/js\/pixel\.js" defer><\/script>\n?/, "");
-html = html.replace(/>\s*\n\s*</g, "><").replace(/\n/g, "");
+const variantsCss = await minifyCss("variants.css");
+
+function buildHtml(template, cssPlaceholder, css) {
+  let result = template
+    .replace(cssPlaceholder, () => css)
+    .replaceAll("%%APP_URL%%", appUrl)
+    .replaceAll("%%BOT_USERNAME%%", botUsername);
+  if (!pixelId) result = result.replace(/<script src="\.?\/js\/pixel\.js" defer><\/script>\n?/, "");
+  return result.replace(/>\s*\n\s*</g, "><").replace(/\n/g, "");
+}
+
+const html = buildHtml(await readFile(join(src, "index.html"), "utf8"), "%%CRITICAL_CSS%%", criticalCss);
+const pages = [{ label: "index.html", html, requireMainCss: true }];
 
 await writeFile(join(out, "index.html"), html);
+for (const variant of variants) {
+  const variantHtml = buildHtml(await readFile(join(src, `${variant}.html`), "utf8"), "%%VARIANTS_CSS%%", variantsCss);
+  await writeFile(join(out, variant, "index.html"), variantHtml);
+  pages.push({ label: `${variant}/index.html`, html: variantHtml, requireMainCss: false });
+}
 await writeFile(join(out, "css", "main.css"), await minifyCss("main.css"));
 await writeFile(
   join(out, "js", "main.js"),
@@ -82,21 +95,30 @@ const imageLimit = 10 * 1024;
 const violations = [];
 const check = (ok, rule) => ok || violations.push(rule);
 
-check(/^<!doctype html><html lang="uz">/.test(html), "html must declare lang");
-check(/<head>.*<style>.+<\/style>.*<\/head>/.test(html), "critical CSS must be inlined in <style>");
-check(
-  html.includes(
-    `<link rel="stylesheet" href="./css/main.css" media="print" onload="this.media='all'"><noscript><link rel="stylesheet" href="./css/main.css"></noscript>`,
-  ),
-  "main.css must load with the media=print swap and a noscript fallback",
-);
-for (const img of html.match(/<img [^>]*>/g) ?? []) {
-  check(img.includes('loading="lazy"') && img.includes('decoding="async"'), `img needs loading=lazy decoding=async: ${img}`);
-  for (const src of img.match(/\.\/img\/[^\s"]+/g) ?? []) check(src.endsWith(".avif"), `image must be AVIF: ${src}`);
+for (const { label, html: pageHtml, requireMainCss } of pages) {
+  check(/^<!doctype html><html\b[^>]*\blang="uz"[^>]*>/.test(pageHtml), `${label}: html must declare lang`);
+  check(/<head>.*<style>.+<\/style>.*<\/head>/.test(pageHtml), `${label}: critical CSS must be inlined in <style>`);
+  if (requireMainCss || pageHtml.includes("main.css")) {
+    check(
+      pageHtml.includes(
+        `<link rel="stylesheet" href="./css/main.css" media="print" onload="this.media='all'"><noscript><link rel="stylesheet" href="./css/main.css"></noscript>`,
+      ),
+      `${label}: main.css must load with the media=print swap and a noscript fallback`,
+    );
+  }
+  for (const img of pageHtml.match(/<img [^>]*>/g) ?? []) {
+    check(img.includes('loading="lazy"') && img.includes('decoding="async"'), `${label}: img needs loading=lazy decoding=async: ${img}`);
+    for (const imgSrc of img.match(/\.?\/img\/[^\s",]+/g) ?? []) check(imgSrc.endsWith(".avif"), `${label}: image must be AVIF: ${imgSrc}`);
+  }
+  for (const script of pageHtml.match(/<script[^>]*>/g) ?? []) check(/ defer[ >]/.test(script), `${label}: script needs defer: ${script}`);
+  check(!/<script(?![^>]*\bsrc=)[^>]*>/.test(pageHtml), `${label}: inline scripts are not allowed`);
+  if (pixelId) {
+    check(
+      /<script src="\.?\/js\/pixel\.js" defer><\/script><\/body><\/html>$/.test(pageHtml),
+      `${label}: Meta Pixel must be the last element`,
+    );
+  }
 }
-for (const script of html.match(/<script[^>]*>/g) ?? []) check(/ defer[ >]/.test(script), `script needs defer: ${script}`);
-check(!/<script(?![^>]*\bsrc=)[^>]*>/.test(html), "inline scripts are not allowed");
-if (pixelId) check(html.endsWith('<script src="./js/pixel.js" defer></script></body></html>'), "Meta Pixel must be the last element");
 for (const file of await readdir(join(out, "img"))) {
   const { size } = await stat(join(out, "img", file));
   check(size <= imageLimit, `img/${file} is ${size} B, limit ${imageLimit} B`);
