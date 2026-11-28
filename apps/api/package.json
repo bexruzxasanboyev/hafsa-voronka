@@ -18,15 +18,15 @@
   },
   "dependencies": {
     "@funnel/shared": "workspace:*",
-    "@hono/node-server": "^2.1.4",
+    "@hono/node-server": "^2.1.11",
     "aws4fetch": "1.0.20",
     "drizzle-orm": "^0.45.4",
     "google-auth-library": "^11.2.0",
     "grammy": "^1.46.0",
-    "hono": "^4.13.13",
+    "hono": "^4.13.23",
     "postgres": "^3.4.9",
     "write-excel-file": "4.1.1",
-    "zod": "^4.6.5"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^24",
