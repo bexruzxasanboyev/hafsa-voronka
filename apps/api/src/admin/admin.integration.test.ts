@@ -259,17 +259,34 @@ describe.skipIf(!testDbUrl)("Admin Integration Tests", () => {
     expect(stats.dropoff.find((d) => d.minute === 8)).toEqual({ minute: 8, count: 1, share: 33.3 });
     expect(stats.dropoff.find((d) => d.minute === 15)).toEqual({ minute: 15, count: 1, share: 33.3 });
 
-    expect(stats.campaigns.length).toBe(3);
+    expect(stats.campaigns.length).toBe(5);
     const fbCampaign = stats.campaigns.find((c) => c.source === "fb_ad" && c.content === "video_ad");
     expect(fbCampaign).toMatchObject({
       source: "fb_ad",
       campaign: "promo_fb",
       content: "video_ad",
+      landingViews: 0,
       botStarts: 1,
+      botStartRate: null,
       registrations: 1,
       completions: 1,
       completionRate: 100,
       channelClicks: 1,
+      realChats: 0,
+      purchases: 0,
+    });
+    const fbLandingOnly = stats.campaigns.find((c) => c.source === "fb_ad" && c.content === "");
+    expect(fbLandingOnly).toEqual({
+      source: "fb_ad",
+      campaign: "promo_fb",
+      content: "",
+      landingViews: 1,
+      botStarts: 0,
+      botStartRate: 0,
+      registrations: 0,
+      completions: 0,
+      completionRate: 0,
+      channelClicks: 0,
       realChats: 0,
       purchases: 0,
     });
@@ -499,7 +516,9 @@ describe.skipIf(!testDbUrl)("Admin Integration Tests", () => {
         source: "tg",
         campaign: "ramazon_2026",
         content: "video_1",
+        landingViews: 0,
         botStarts: 2,
+        botStartRate: null,
         registrations: 2,
         completions: 1,
         completionRate: 50,
@@ -647,7 +666,9 @@ describe.skipIf(!testDbUrl)("Admin Integration Tests", () => {
       source: "",
       campaign: "",
       content: "",
+      landingViews: 0,
       botStarts: 0,
+      botStartRate: null,
       registrations: 0,
       completions: 0,
       completionRate: 0,

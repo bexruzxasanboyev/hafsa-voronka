@@ -220,6 +220,7 @@ export async function getCampaignStats(filters: QueryFilters): Promise<CampaignS
     source: string;
     campaign: string;
     content: string;
+    landing_views: string | number;
     bot_starts: string | number;
     registrations: string | number;
     completions: string | number;
@@ -232,6 +233,7 @@ export async function getCampaignStats(filters: QueryFilters): Promise<CampaignS
         coalesce(u.utm_source, '') AS source,
         coalesce(u.utm_campaign, '') AS campaign,
         coalesce(u.utm_content, '') AS content,
+        0::bigint AS landing_views,
         count(DISTINCT CASE WHEN e.type = 'bot_start' THEN e.user_id END) AS bot_starts,
         count(DISTINCT CASE WHEN e.type = 'registered' THEN e.user_id END) AS registrations,
         count(DISTINCT CASE WHEN e.type = 'video_complete' THEN e.user_id END) AS completions,
@@ -253,6 +255,7 @@ export async function getCampaignStats(filters: QueryFilters): Promise<CampaignS
         coalesce(u.utm_source, '') AS source,
         coalesce(u.utm_campaign, '') AS campaign,
         coalesce(u.utm_content, '') AS content,
+        0::bigint AS landing_views,
         0::bigint AS bot_starts,
         0::bigint AS registrations,
         0::bigint AS completions,
@@ -284,11 +287,33 @@ export async function getCampaignStats(filters: QueryFilters): Promise<CampaignS
             AND (u.paid_at AT TIME ZONE 'Asia/Tashkent')::date <= ${filters.to}::date)
         )
       GROUP BY coalesce(u.utm_source, ''), coalesce(u.utm_campaign, ''), coalesce(u.utm_content, '')
+    ),
+    landing_agg AS (
+      SELECT
+        coalesce(e.meta->>'utm_source', '') AS source,
+        coalesce(e.meta->>'utm_campaign', '') AS campaign,
+        coalesce(e.meta->>'utm_content', '') AS content,
+        count(DISTINCT e.visitor_id) AS landing_views,
+        0::bigint AS bot_starts,
+        0::bigint AS registrations,
+        0::bigint AS completions,
+        0::bigint AS channel_clicks,
+        0::bigint AS real_chats,
+        0::bigint AS purchases
+      FROM events e
+      WHERE
+        e.type = 'landing_view'
+        AND (e.created_at AT TIME ZONE 'Asia/Tashkent')::date >= ${filters.from}::date
+        AND (e.created_at AT TIME ZONE 'Asia/Tashkent')::date <= ${filters.to}::date
+        AND (${filters.source ?? null}::text IS NULL OR e.meta->>'utm_source' = ${filters.source ?? null})
+        AND (${filters.campaign ?? null}::text IS NULL OR e.meta->>'utm_campaign' = ${filters.campaign ?? null})
+      GROUP BY coalesce(e.meta->>'utm_source', ''), coalesce(e.meta->>'utm_campaign', ''), coalesce(e.meta->>'utm_content', '')
     )
     SELECT
       source,
       campaign,
       content,
+      sum(landing_views) AS landing_views,
       sum(bot_starts) AS bot_starts,
       sum(registrations) AS registrations,
       sum(completions) AS completions,
@@ -299,24 +324,30 @@ export async function getCampaignStats(filters: QueryFilters): Promise<CampaignS
       SELECT * FROM event_agg
       UNION ALL
       SELECT * FROM milestone_agg
+      UNION ALL
+      SELECT * FROM landing_agg
     ) combined
     GROUP BY source, campaign, content
     ORDER BY registrations DESC, bot_starts DESC, real_chats DESC, purchases DESC
   `);
 
   return result.map((row) => {
+    const landingViews = Number(row.landing_views) || 0;
     const botStarts = Number(row.bot_starts) || 0;
     const registrations = Number(row.registrations) || 0;
     const completions = Number(row.completions) || 0;
     const channelClicks = Number(row.channel_clicks) || 0;
     const realChats = Number(row.real_chats) || 0;
     const purchases = Number(row.purchases) || 0;
+    const botStartRate = landingViews > 0 ? Math.round((botStarts / landingViews) * 1000) / 10 : null;
     const completionRate = registrations > 0 ? Math.round((completions / registrations) * 1000) / 10 : 0;
     return {
       source: row.source,
       campaign: row.campaign,
       content: row.content,
+      landingViews,
       botStarts,
+      botStartRate,
       registrations,
       completions,
       completionRate,
