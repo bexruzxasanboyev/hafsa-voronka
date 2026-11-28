@@ -22,7 +22,12 @@ const nextConfig: NextConfig = {
   },
   async rewrites() {
     return {
-      beforeFiles: [{ source: "/", destination: "/index.html" }],
+      beforeFiles: [
+        { source: "/", destination: "/index.html" },
+        { source: "/a", destination: "/a/index.html" },
+        { source: "/b", destination: "/b/index.html" },
+        { source: "/c", destination: "/c/index.html" },
+      ],
       afterFiles: [],
       fallback: [],
     };

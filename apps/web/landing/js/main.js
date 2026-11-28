@@ -93,6 +93,7 @@ function track(data) {
 
 function startTimer() {
   const el = document.getElementById("timer");
+  if (!el) return;
   const key = "video_deadline";
   let deadline;
   try {
@@ -170,7 +171,7 @@ document.addEventListener("click", (event) => {
 const sticky = document.getElementById("sticky");
 const heroCta = document.getElementById("hero-cta");
 
-if ("IntersectionObserver" in window) {
+if (sticky && heroCta && "IntersectionObserver" in window) {
   sticky.hidden = false;
   sticky.inert = true;
   new IntersectionObserver(([entry]) => {
